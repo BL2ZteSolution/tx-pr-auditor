@@ -1,0 +1,11 @@
+# Real operational input workbooks are local-only.
+input/Final PO.xlsx
+input/EPMS.xlsx
+
+# Generated audit results are runtime-only.
+output/*
+!output/.gitkeep
+
+# Python runtime artifacts.
+__pycache__/
+*.pyc

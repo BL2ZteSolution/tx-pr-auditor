@@ -1,0 +1,7 @@
+interface:
+  display_name: "TX PR Auditor"
+  short_description: "Audit TX PR and PO workbooks"
+  default_prompt: "Use $tx-pr-auditor to audit TX Final PO, EPMS, and PR Model workbooks."
+
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,2 @@
+# Core runtime dependencies
+openpyxl>=3.1
