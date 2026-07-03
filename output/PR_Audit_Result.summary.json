@@ -1,0 +1,17 @@
+{
+  "output": "output/PR_Audit_Result.xlsx",
+  "total_rows": 35,
+  "classifications": {
+    "Abnormal - Invalid PO": 20,
+    "Normal": 9,
+    "Abnormal - Wrong PO": 6
+  },
+  "reason_codes": {
+    "INVALID_SUBCON_CHANGED": 1,
+    "NORMAL_FULL": 9,
+    "WRONG_LINE_ITEM_MAPPING": 6,
+    "INVALID_WRONG_DOMAIN": 5,
+    "INVALID_NO_EXPECTED_BUSINESS_FACT": 14
+  },
+  "generated_at": "2026-07-01T19:54:50"
+}
