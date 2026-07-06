@@ -1,7 +1,7 @@
 interface:
   display_name: "TX PR Auditor"
-  short_description: "Audit TX PR and PO workbooks"
-  default_prompt: "Use $tx-pr-auditor to audit TX Final PO, EPMS, and PR Model workbooks."
+  short_description: "Audit Final PO against generated ECC output"
+  default_prompt: "Use $tx-pr-auditor to validate Final PO.xlsx against create-pr-cd generated ECC workbooks."
 
 policy:
   allow_implicit_invocation: true

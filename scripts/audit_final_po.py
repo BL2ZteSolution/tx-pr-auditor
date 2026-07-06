@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
-TX PR Auditor - Final PO validation baseline.
+TX PR Auditor - validate Final PO against create-pr-cd ECC output.
 
-This script validates submitted Final PO rows against EPMS facts and the PR
-Model. It intentionally follows the skill architecture as a staged pipeline and
-fails closed when the current rule inputs are not sufficient for a confident
-decision.
+The auditor treats generated ECC rows as the expected entitlement. EPMS and
+PR Model workbooks are intentionally not inputs here; create-pr-cd owns that
+generation logic.
 """
 
 from __future__ import annotations
@@ -21,75 +20,101 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
-PLANNING_ITEM_CODE = "350001000403"
-OPERATION_ITEM_CODE = "350000592793"
-ANTENNA_ITEM_CODES = {
-    "350001095405": (0.0, 0.6),
-    "350001095406": (0.6, 1.2),
-    "350001095407": (1.2, 1.8),
-    "350001095408": (1.8, None),
-}
-FINAL_PO_SHEET_NAME = "条目明细"
-EPMS_SHEET_NAME = "data"
+FINAL_PO_SHEET_NAME = "æ¡ç›®æ˜Žç»†"
+ECC_SHEET_NAME = "details"
 
 FINAL_PO_FIELD_MAP = {
     "派工日期": "dispatch_date",
+    "æ´¾å·¥æ—¥æœŸ": "dispatch_date",
     "派工单号": "dispatch_order_number",
+    "æ´¾å·¥å•å·": "dispatch_order_number",
     "PO行号": "po_line_number",
+    "POè¡Œå·": "po_line_number",
     "需求单号": "request_number",
+    "éœ€æ±‚å•å·": "request_number",
     "项目名称": "project_name",
+    "é¡¹ç›®åç§°": "project_name",
     "项目编码": "project_code",
+    "é¡¹ç›®ç¼–ç ": "project_code",
     "业务大类": "business_domain",
+    "能力大类": "business_domain",
+    "ä¸šåŠ¡å¤§ç±»": "business_domain",
     "施工区域": "region",
+    "æ–½å·¥åŒºåŸŸ": "region",
     "采购区域": "purchasing_area",
+    "é‡‡è´­åŒºåŸŸ": "purchasing_area",
     "分包商": "submitted_subcontractor",
+    "åˆ†åŒ…å•†": "submitted_subcontractor",
     "逻辑站点名称": "logical_site_name",
+    "é€»è¾‘ç«™ç‚¹åç§°": "logical_site_name",
     "逻辑站点编码": "du",
+    "é€»è¾‘ç«™ç‚¹ç¼–ç ": "du",
     "物理站点名称": "physical_site_name",
+    "ç‰©ç†ç«™ç‚¹åç§°": "physical_site_name",
     "物理站点编码": "site_code",
+    "ç‰©ç†ç«™ç‚¹ç¼–ç ": "site_code",
     "外包代码": "submitted_item_code",
+    "å¤–åŒ…ä»£ç ": "submitted_item_code",
     "代码名称": "submitted_item_description",
+    "ä»£ç åç§°": "submitted_item_description",
     "量纲": "submitted_unit",
+    "é‡çº²": "submitted_unit",
     "派工数量": "submitted_quantity",
+    "æ´¾å·¥æ•°é‡": "submitted_quantity",
     "结算数量": "settlement_quantity",
+    "ç»“ç®—æ•°é‡": "settlement_quantity",
     "支付数量": "paid_quantity",
+    "æ”¯ä»˜æ•°é‡": "paid_quantity",
     "产品型号_备注": "product_model_remark",
+    "äº§å“åž‹å·_å¤‡æ³¨": "product_model_remark",
     "派工单状态": "dispatch_status",
+    "æ´¾å·¥å•çŠ¶æ€": "dispatch_status",
     "外包商编码": "subcontractor_code",
+    "å¤–åŒ…å•†ç¼–ç ": "subcontractor_code",
 }
 
-EPMS_FIELD_MAP = {
-    "customer site code": "site_code",
-    "customer site name": "site_name",
-    "du code": "du",
-    "region": "epms_region",
-    "Province/State": "province_state",
-    "Latitude (North Plus South Minus)": "latitude",
-    "Longitude (East Plus West Minus)": "longitude",
-    "TX Upgrade Scope": "tx_upgrade_scope",
-    "BOQ Configuration": "boq_configuration",
-    "Tx SOW": "tx_sow",
-    "TX SOW Details": "tx_sow_details",
-    "NE SOW Details": "ne_sow_details",
-    "FE SOW Details": "fe_sow_details",
-    "MW Config Antenna Size NE": "antenna_size_ne",
-    "MW Config Antenna Size FE": "antenna_size_fe",
-    "SubCon - TSS Team": "expected_tss_subcontractor",
-    "Subcon PR - TSS": "existing_tss_pr",
-    "SubCon - TI Team": "expected_ti_subcontractor",
-    "Subcon PR - TI": "existing_ti_pr",
-    "TX Cutover Date": "tx_cutover_date",
-    "Subcon - Planning": "expected_planning_subcontractor",
-    "Subcon PR - Planning": "existing_planning_pr",
+ECC_FIELD_MAP = {
+    "SN.": "sn",
+    "Purchasing Area*": "purchasing_area",
+    "Region*": "region",
+    "Site ID*": "site_code",
+    "Site Name*": "site_name",
+    "Delivery Unit Code*": "du",
+    "Logical Site Name": "logical_site_name",
+    "Contract Number *": "contract_number",
+    "Subcontractor*": "expected_subcontractor",
+    "PBOM Code*": "expected_item_code",
+    "SOW*": "expected_item_description",
+    "Unit*": "expected_unit",
+    "Quantity*": "expected_quantity",
+    "Remarks": "remarks",
 }
 
+AUDIT_HEADERS = [
+    "Source Row",
+    "Scope",
+    "Audit Result",
+    "Reason Code",
+    "Expected Item",
+    "Expected Quantity",
+    "Expected Subcontractor",
+    "Normal Quantity",
+    "Duplicate Quantity",
+    "Expected ECC Evidence",
+    "Matched ECC Evidence",
+    "Explanation",
+]
 
-@dataclass(frozen=True)
-class RawDataset:
-    final_po_rows: List[Dict[str, Any]]
-    epms_rows: List[Dict[str, Any]]
-    pr_model_rows: List[Dict[str, Any]]
-    metadata: Dict[str, Any]
+ECC_ANNOTATION_HEADERS = [
+    "Audit Status",
+    "Audit Reason Codes",
+    "Final PO Match Count",
+    "Submitted Quantity",
+    "Normal Quantity",
+    "Duplicate Quantity",
+    "Final PO Evidence",
+    "Audit Explanation",
+]
 
 
 @dataclass(frozen=True)
@@ -100,56 +125,37 @@ class FinalPORecord:
 
 
 @dataclass(frozen=True)
-class EPMSRecord:
+class ExpectedECCRecord:
+    source_file: str
+    source_sheet: str
     source_row: int
     raw: Dict[str, Any]
     canonical: Dict[str, Any]
 
 
 @dataclass(frozen=True)
+class RawDataset:
+    final_po_rows: List[Dict[str, Any]]
+    ecc_rows: List[Dict[str, Any]]
+    metadata: Dict[str, Any]
+
+
+@dataclass(frozen=True)
 class CanonicalDataset:
     final_po_records: List[FinalPORecord]
-    epms_records: List[EPMSRecord]
-    pr_model_rows: List[Dict[str, Any]]
+    expected_records: List[ExpectedECCRecord]
     metadata: Dict[str, Any]
 
 
 @dataclass(frozen=True)
-class BusinessRecord:
+class ExpectedMatch:
     final_po: FinalPORecord
-    epms: Optional[EPMSRecord]
     scope: str
-    expected_subcontractor: str
-    business_facts: Dict[str, Any]
-
-
-@dataclass(frozen=True)
-class BusinessDataset:
-    records: List[BusinessRecord]
-    pr_model_rows: List[Dict[str, Any]]
-    metadata: Dict[str, Any]
-
-
-@dataclass(frozen=True)
-class ExpectedItem:
-    code: str
-    quantity: float
-    scope: str
-    reason: str
-
-
-@dataclass(frozen=True)
-class ExpectedRecord:
-    business_record: BusinessRecord
-    expected_items: List[ExpectedItem]
-    expected_subcontractor: str
-    model_evidence: str
-
-
-@dataclass(frozen=True)
-class ExpectedDataset:
-    records: List[ExpectedRecord]
-    metadata: Dict[str, Any]
+    candidate_site_key: str
+    expected_items: List[ExpectedECCRecord]
+    exact_item_records: List[ExpectedECCRecord]
+    expected_subcontractors: List[str]
+    evidence: str
 
 
 @dataclass(frozen=True)
@@ -158,14 +164,14 @@ class AuditResult:
     scope: str
     classification: str
     reason_code: str
-    expected_items: List[ExpectedItem]
+    expected_items: List[ExpectedECCRecord]
     expected_subcontractor: str
     expected_quantity: float
     normal_quantity: float
     duplicate_quantity: float
     explanation: str
-    epms_evidence: str
-    pr_model_evidence: str
+    expected_evidence: str
+    matched_evidence: str
     consumes_quantity: bool
 
 
@@ -177,47 +183,34 @@ class AuditDataset:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Validate Final PO.xlsx against EPMS.xlsx and pr_model.xlsx."
+        description="Validate Final PO.xlsx against create-pr-cd generated ECC output."
+    )
+    parser.add_argument("--final-po", default="input/Final PO.xlsx", help="Path to Final PO.xlsx")
+    parser.add_argument("--final-po-sheet", default=FINAL_PO_SHEET_NAME, help="Final PO worksheet name")
+    parser.add_argument("--final-po-header-row", type=int, default=1, help="1-based Final PO header row")
+    parser.add_argument("--final-po-max-rows", type=int, help="Optional maximum number of Final PO data rows to read")
+    parser.add_argument(
+        "--expected-ecc",
+        action="append",
+        required=True,
+        help="Generated ECC .xlsx file or directory. Repeat for multiple paths.",
+    )
+    parser.add_argument("--ecc-sheet", default=ECC_SHEET_NAME, help="ECC worksheet name")
+    parser.add_argument("--output", default="output/PR_Audit_Result.xlsx", help="Audit workbook path")
+    parser.add_argument("--summary-json", help="Optional JSON summary path")
+    parser.add_argument(
+        "--annotate-ecc-output",
+        action="store_true",
+        help="Copy generated ECC workbooks to a timestamped folder and append audit status columns.",
     )
     parser.add_argument(
-        "--final-po",
-        default="input/Final PO.xlsx",
-        help="Path to Final PO.xlsx",
+        "--annotated-ecc-output-root",
+        default="output",
+        help="Root directory for timestamped annotated ECC output folders.",
     )
     parser.add_argument(
-        "--final-po-sheet",
-        default=FINAL_PO_SHEET_NAME,
-        help="Worksheet name to read from Final PO.xlsx",
-    )
-    parser.add_argument(
-        "--final-po-header-row",
-        type=int,
-        default=1,
-        help="1-based header row number in Final PO.xlsx",
-    )
-    parser.add_argument(
-        "--epms",
-        default="input/EPMS.xlsx",
-        help="Path to EPMS.xlsx",
-    )
-    parser.add_argument(
-        "--epms-sheet",
-        default=EPMS_SHEET_NAME,
-        help="Worksheet name to read from EPMS.xlsx",
-    )
-    parser.add_argument(
-        "--pr-model",
-        default="input/pr_model.xlsx",
-        help="Path to pr_model.xlsx",
-    )
-    parser.add_argument(
-        "--output",
-        default="output/PR_Audit_Result.xlsx",
-        help="Path for PR_Audit_Result.xlsx",
-    )
-    parser.add_argument(
-        "--summary-json",
-        help="Optional path for a JSON summary",
+        "--annotated-ecc-timestamp",
+        help="Optional timestamp folder name for annotated ECC output, useful for deterministic tests.",
     )
     return parser.parse_args()
 
@@ -227,16 +220,36 @@ def require_openpyxl():
         from openpyxl import Workbook, load_workbook
         from openpyxl.styles import Font, PatternFill
     except ModuleNotFoundError as exc:
-        raise SystemExit(
-            "Missing dependency: openpyxl. Install with `python3 -m pip install -r requirements.txt`."
-        ) from exc
+        raise SystemExit("Missing dependency: openpyxl. Install with `python -m pip install -r requirements.txt`.") from exc
     return Workbook, load_workbook, Font, PatternFill
 
 
 def require_file(path: Path, label: str) -> Path:
     if not path.exists():
         raise FileNotFoundError(f"{label} not found: {path}")
+    if not path.is_file():
+        raise FileNotFoundError(f"{label} is not a file: {path}")
     return path
+
+
+def expand_ecc_paths(paths: Sequence[str]) -> List[Path]:
+    files: List[Path] = []
+    for raw_path in paths:
+        path = Path(raw_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Expected ECC path not found: {path}")
+        if path.is_dir():
+            files.extend(sorted(p for p in path.iterdir() if p.suffix.lower() in {".xlsx", ".xlsm"} and not p.name.startswith("~$")))
+        elif path.suffix.lower() in {".xlsx", ".xlsm"}:
+            files.append(path)
+        else:
+            raise ValueError(f"Expected ECC input must be an .xlsx/.xlsm file or directory: {path}")
+    unique: Dict[str, Path] = {}
+    for file_path in files:
+        unique[str(file_path.resolve())] = file_path
+    if not unique:
+        raise FileNotFoundError("No generated ECC .xlsx/.xlsm files were found.")
+    return list(unique.values())
 
 
 def normalize_header(value: Any) -> str:
@@ -247,14 +260,9 @@ def unique_headers(headers: Sequence[Any]) -> List[str]:
     counts: Dict[str, int] = defaultdict(int)
     out: List[str] = []
     for header in headers:
-        name = normalize_header(header)
-        if not name:
-            name = "EMPTY"
+        name = normalize_header(header) or "EMPTY"
         counts[name] += 1
-        if counts[name] == 1:
-            out.append(name)
-        else:
-            out.append(f"{name}__{counts[name]}")
+        out.append(name if counts[name] == 1 else f"{name}__{counts[name]}")
     return out
 
 
@@ -266,7 +274,12 @@ def trim_trailing_empty(values: Sequence[Any]) -> List[Any]:
     return list(values[:last_nonempty])
 
 
-def read_table(path: Path, sheet_name: str, header_row: int) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+def read_table(
+    path: Path,
+    sheet_name: str,
+    header_row: int,
+    max_data_rows: Optional[int] = None,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     _, load_workbook, _, _ = require_openpyxl()
     wb = load_workbook(path, read_only=True, data_only=True)
     if sheet_name not in wb.sheetnames:
@@ -283,6 +296,8 @@ def read_table(path: Path, sheet_name: str, header_row: int) -> Tuple[List[Dict[
     consecutive_blank_rows = 0
     max_blank_tail_rows = 1000
     for row_idx, row in enumerate(ws.iter_rows(min_row=header_row + 1, values_only=True), header_row + 1):
+        if max_data_rows is not None and len(rows) >= max_data_rows:
+            break
         values = list(row[: len(headers)])
         if not any(value not in (None, "") for value in values):
             consecutive_blank_rows += 1
@@ -292,74 +307,41 @@ def read_table(path: Path, sheet_name: str, header_row: int) -> Tuple[List[Dict[
         consecutive_blank_rows = 0
         record = {headers[i]: values[i] if i < len(values) else None for i in range(len(headers))}
         record["_source_row"] = row_idx
+        record["_source_file"] = str(path)
+        record["_source_sheet"] = ws.title
         rows.append(record)
     return rows, {
         "path": str(path),
         "sheet": ws.title,
         "header_row": header_row,
         "row_count": len(rows),
+        "max_data_rows": max_data_rows,
         "column_count": len(headers),
-    }
-
-
-def read_pr_model(path: Path) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    _, load_workbook, _, _ = require_openpyxl()
-    wb = load_workbook(path, read_only=True, data_only=True)
-    target_sheet = "TX Line Item (After 21-Apr 26)"
-    sheet_name = target_sheet if target_sheet in wb.sheetnames else wb.sheetnames[0]
-    ws = wb[sheet_name]
-    rows: List[Dict[str, Any]] = []
-    section = ""
-    for row_idx, row in enumerate(ws.iter_rows(values_only=True), 1):
-        values = list(row[:8])
-        first = text(values[0])
-        if "TSS Model" in first:
-            section = "TSS"
-            continue
-        if "TI Model" in first:
-            section = "TI"
-            continue
-        if section and first and text(values[1]) and text(values[2]):
-            rows.append(
-                {
-                    "source_row": row_idx,
-                    "section": section,
-                    "sow": first,
-                    "code": text(values[1]),
-                    "description": text(values[2]),
-                    "unit": text(values[3]) or "Hop",
-                    "quantity": to_float(values[4], default=1.0),
-                    "rules": text(values[5]),
-                    "is_mandatory": "Mandatory" in text(values[5]),
-                    "worksheet": sheet_name,
-                }
-            )
-    return rows, {
-        "path": str(path),
-        "sheet": sheet_name,
-        "row_count": len(rows),
     }
 
 
 def workbook_reader(
     final_po: Path,
-    epms: Path,
-    pr_model: Path,
-    final_po_sheet: str = FINAL_PO_SHEET_NAME,
-    final_po_header_row: int = 1,
-    epms_sheet: str = EPMS_SHEET_NAME,
+    expected_ecc_files: Sequence[Path],
+    final_po_sheet: str,
+    final_po_header_row: int,
+    final_po_max_rows: Optional[int],
+    ecc_sheet: str,
 ) -> RawDataset:
-    final_po_rows, final_meta = read_table(final_po, sheet_name=final_po_sheet, header_row=final_po_header_row)
-    epms_rows, epms_meta = read_table(epms, sheet_name=epms_sheet, header_row=4)
-    pr_rows, pr_meta = read_pr_model(pr_model)
+    final_po_rows, final_meta = read_table(final_po, final_po_sheet, final_po_header_row, final_po_max_rows)
+    ecc_rows: List[Dict[str, Any]] = []
+    ecc_meta = []
+    for ecc_file in expected_ecc_files:
+        rows, meta = read_table(ecc_file, ecc_sheet, 1)
+        ecc_rows.extend(rows)
+        ecc_meta.append(meta)
     return RawDataset(
         final_po_rows=final_po_rows,
-        epms_rows=epms_rows,
-        pr_model_rows=pr_rows,
+        ecc_rows=ecc_rows,
         metadata={
             "final_po": final_meta,
-            "epms": epms_meta,
-            "pr_model": pr_meta,
+            "expected_ecc": ecc_meta,
+            "expected_ecc_files": [str(path) for path in expected_ecc_files],
         },
     )
 
@@ -367,7 +349,8 @@ def workbook_reader(
 def canonicalize(raw: Dict[str, Any], field_map: Dict[str, str]) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     for source_field, canonical_field in field_map.items():
-        out[canonical_field] = raw.get(source_field)
+        if canonical_field not in out or out[canonical_field] in (None, ""):
+            out[canonical_field] = raw.get(source_field)
     return out
 
 
@@ -380,336 +363,260 @@ def field_mapper(raw: RawDataset) -> CanonicalDataset:
         )
         for row in raw.final_po_rows
     ]
-    epms_records = [
-        EPMSRecord(
+    expected_records = [
+        ExpectedECCRecord(
+            source_file=text(row["_source_file"]),
+            source_sheet=text(row["_source_sheet"]),
             source_row=int(row["_source_row"]),
             raw=row,
-            canonical=canonicalize(row, EPMS_FIELD_MAP),
+            canonical=canonicalize(row, ECC_FIELD_MAP),
         )
-        for row in raw.epms_rows
+        for row in raw.ecc_rows
     ]
-    return CanonicalDataset(
-        final_po_records=final_records,
-        epms_records=epms_records,
-        pr_model_rows=raw.pr_model_rows,
-        metadata=raw.metadata,
-    )
+    return CanonicalDataset(final_records, expected_records, raw.metadata)
 
 
-def canonical_builder(canonical: CanonicalDataset) -> CanonicalDataset:
-    final_records = []
-    for record in canonical.final_po_records:
+def canonical_builder(dataset: CanonicalDataset) -> CanonicalDataset:
+    final_records: List[FinalPORecord] = []
+    for record in dataset.final_po_records:
         data = dict(record.canonical)
-        data["du"] = text(data.get("du"))
-        data["submitted_item_code"] = text(data.get("submitted_item_code"))
-        data["submitted_quantity"] = to_float(data.get("submitted_quantity"), default=0.0)
-        data["settlement_quantity"] = to_float(data.get("settlement_quantity"), default=0.0)
+        data["site_code"] = normalize_code(data.get("site_code"))
+        data["du"] = normalize_code(data.get("du"))
+        data["submitted_item_code"] = normalize_code(data.get("submitted_item_code"))
+        data["submitted_quantity"] = submitted_quantity(data)
+        data["submitted_subcontractor_norm"] = normalize_subcontractor(data.get("submitted_subcontractor"))
         data["dispatch_sort_key"] = dispatch_sort_key(data)
         final_records.append(replace(record, canonical=data))
 
-    epms_records = []
-    for record in canonical.epms_records:
+    expected_records: List[ExpectedECCRecord] = []
+    for record in dataset.expected_records:
         data = dict(record.canonical)
-        data["du"] = text(data.get("du"))
-        data["integration_end_date"] = first_nonempty(
-            [data.get("tx_cutover_date")]
-            + [value for key, value in record.raw.items() if key.startswith("actual end time")]
-        )
-        epms_records.append(replace(record, canonical=data))
+        data["site_code"] = normalize_code(data.get("site_code"))
+        data["du"] = normalize_code(data.get("du"))
+        data["expected_item_code"] = normalize_code(data.get("expected_item_code"))
+        data["expected_quantity"] = to_float(data.get("expected_quantity"), default=0.0)
+        data["expected_subcontractor_norm"] = normalize_subcontractor(data.get("expected_subcontractor"))
+        data["scope"] = infer_scope_from_ecc(record.source_file)
+        data["entitlement_key"] = entitlement_key(data)
+        expected_records.append(replace(record, canonical=data))
 
-    return CanonicalDataset(
-        final_po_records=final_records,
-        epms_records=epms_records,
-        pr_model_rows=canonical.pr_model_rows,
-        metadata=canonical.metadata,
-    )
+    return CanonicalDataset(final_records, expected_records, dataset.metadata)
 
 
-def epms_matcher(dataset: CanonicalDataset) -> BusinessDataset:
-    epms_by_du: Dict[str, EPMSRecord] = {}
-    for record in dataset.epms_records:
-        du = record.canonical.get("du")
-        if du and du not in epms_by_du:
-            epms_by_du[du] = record
+def expected_matcher(dataset: CanonicalDataset) -> List[ExpectedMatch]:
+    expected_by_site: Dict[str, List[ExpectedECCRecord]] = defaultdict(list)
+    for expected in dataset.expected_records:
+        for key in site_keys(expected.canonical):
+            expected_by_site[key].append(expected)
 
-    records: List[BusinessRecord] = []
-    for final_record in dataset.final_po_records:
-        epms = epms_by_du.get(final_record.canonical.get("du"))
-        scope = infer_scope(final_record)
-        facts = build_business_facts(epms)
-        expected_subcon = expected_subcontractor(scope, facts)
-        records.append(
-            BusinessRecord(
-                final_po=final_record,
-                epms=epms,
+    matches: List[ExpectedMatch] = []
+    for final_po in dataset.final_po_records:
+        f = final_po.canonical
+        candidate_keys = [key for key in [f.get("site_code"), f.get("du")] if key]
+        expected_items = []
+        site_key = ""
+        for key in candidate_keys:
+            if expected_by_site.get(key):
+                expected_items = expected_by_site[key]
+                site_key = key
+                break
+        submitted_code = f.get("submitted_item_code")
+        exact = [item for item in expected_items if item.canonical.get("expected_item_code") == submitted_code]
+        scope = infer_scope_from_expected_or_final(exact or expected_items, final_po)
+        subcon = sorted({text(item.canonical.get("expected_subcontractor")) for item in expected_items if text(item.canonical.get("expected_subcontractor"))})
+        matches.append(
+            ExpectedMatch(
+                final_po=final_po,
                 scope=scope,
-                expected_subcontractor=expected_subcon,
-                business_facts=facts,
+                candidate_site_key=site_key,
+                expected_items=expected_items,
+                exact_item_records=exact,
+                expected_subcontractors=subcon,
+                evidence=expected_evidence(expected_items),
             )
         )
-    return BusinessDataset(records=records, pr_model_rows=dataset.pr_model_rows, metadata=dataset.metadata)
+    return matches
 
 
-def business_fact_builder(dataset: BusinessDataset) -> BusinessDataset:
-    return dataset
-
-
-def pr_model_resolver(dataset: BusinessDataset) -> BusinessDataset:
-    return dataset
-
-
-def expected_item_generator(dataset: BusinessDataset) -> ExpectedDataset:
-    expected_records: List[ExpectedRecord] = []
-    for record in dataset.records:
-        items, evidence = expected_items_for_record(record, dataset.pr_model_rows)
-        expected_records.append(
-            ExpectedRecord(
-                business_record=record,
-                expected_items=items,
-                expected_subcontractor=record.expected_subcontractor,
-                model_evidence=evidence,
-            )
-        )
-    return ExpectedDataset(records=expected_records, metadata=dataset.metadata)
-
-
-def audit_engine(dataset: ExpectedDataset) -> AuditDataset:
+def audit_engine(matches: Sequence[ExpectedMatch], metadata: Dict[str, Any]) -> AuditDataset:
     results: List[AuditResult] = []
-    for expected_record in dataset.records:
-        business = expected_record.business_record
-        final_po = business.final_po
-        submitted = final_po.canonical
-        submitted_code = text(submitted.get("submitted_item_code"))
-        submitted_subcon = normalize_subcontractor(submitted.get("submitted_subcontractor"))
-        expected_subcon = normalize_subcontractor(expected_record.expected_subcontractor)
-        epms_evidence = epms_evidence_text(business)
+    for match in matches:
+        final_po = match.final_po
+        f = final_po.canonical
+        submitted_subcon = f.get("submitted_subcontractor_norm")
+        exact_subcons = {
+            item.canonical.get("expected_subcontractor_norm")
+            for item in match.exact_item_records
+            if item.canonical.get("expected_subcontractor_norm")
+        }
+        site_subcons = {
+            item.canonical.get("expected_subcontractor_norm")
+            for item in match.expected_items
+            if item.canonical.get("expected_subcontractor_norm")
+        }
+        expected_subcontractor = "; ".join(match.expected_subcontractors)
 
-        if business.epms is None:
+        if not match.expected_items:
             results.append(
                 make_result(
-                    expected_record,
+                    match,
                     "Abnormal - Invalid PO",
-                    "INVALID_NO_EXPECTED_BUSINESS_FACT",
-                    "No EPMS row matched the submitted DU.",
-                    epms_evidence,
+                    "INVALID_NOT_IN_CREATE_PR_CD_OUTPUT",
+                    "No generated ECC entitlement exists for the submitted site or DU.",
+                    expected_subcontractor,
                     consumes=False,
                 )
             )
             continue
 
-        if expected_subcon and submitted_subcon != expected_subcon:
+        if submitted_subcon and site_subcons and submitted_subcon not in site_subcons:
             results.append(
                 make_result(
-                    expected_record,
+                    match,
                     "Abnormal - Invalid PO",
                     "INVALID_SUBCON_CHANGED",
-                    "Submitted subcontractor does not match expected subcontractor.",
-                    epms_evidence,
+                    "Submitted subcontractor does not match the generated ECC subcontractor for this site.",
+                    expected_subcontractor,
                     consumes=False,
                 )
             )
             continue
 
-        if business.scope == "UNKNOWN":
+        if not match.exact_item_records:
             results.append(
                 make_result(
-                    expected_record,
-                    "Abnormal - Invalid PO",
-                    "INVALID_WRONG_DOMAIN",
-                    "Submitted item/domain could not be mapped to a supported TX audit scope.",
-                    epms_evidence,
-                    consumes=False,
-                )
-            )
-            continue
-
-        if business.scope == "OPERATION" and not business.business_facts.get("integration_end_date"):
-            results.append(
-                make_result(
-                    expected_record,
-                    "Abnormal - Invalid PO",
-                    "INVALID_NO_OPERATION_TRIGGER",
-                    "Operation item submitted but EPMS integration end date trigger is blank.",
-                    epms_evidence,
-                    consumes=False,
-                )
-            )
-            continue
-
-        if not expected_record.expected_items:
-            results.append(
-                make_result(
-                    expected_record,
-                    "Abnormal - Invalid PO",
-                    "INVALID_NO_EXPECTED_BUSINESS_FACT",
-                    "No expected item could be generated from current EPMS and PR Model inputs.",
-                    epms_evidence,
-                    consumes=False,
-                )
-            )
-            continue
-
-        expected_codes = {item.code for item in expected_record.expected_items}
-        if submitted_code not in expected_codes:
-            reason = wrong_reason_for_submitted_code(business, submitted_code)
-            results.append(
-                make_result(
-                    expected_record,
+                    match,
                     "Abnormal - Wrong PO",
-                    reason,
-                    "Submitted item is in the auditable scope but does not match expected mapping.",
-                    epms_evidence,
+                    "WRONG_LINE_ITEM_MAPPING",
+                    "Submitted item code is not present in the generated ECC entitlement for this site.",
+                    expected_subcontractor,
                     consumes=False,
                 )
             )
             continue
 
-        expected_quantity = sum(item.quantity for item in expected_record.expected_items if item.code == submitted_code)
+        if submitted_subcon and exact_subcons and submitted_subcon not in exact_subcons:
+            results.append(
+                make_result(
+                    match,
+                    "Abnormal - Invalid PO",
+                    "INVALID_SUBCON_CHANGED",
+                    "Submitted subcontractor does not match the generated ECC subcontractor for this item.",
+                    expected_subcontractor,
+                    consumes=False,
+                )
+            )
+            continue
+
+        expected_qty = sum(item.canonical.get("expected_quantity", 0.0) for item in match.exact_item_records)
         results.append(
             make_result(
-                expected_record,
+                match,
                 "PENDING_QUANTITY",
                 "PENDING_QUANTITY",
-                "Submitted item passed validity checks and is ready for duplicate resolution.",
-                epms_evidence,
-                expected_quantity=expected_quantity,
+                "Submitted item matches generated ECC entitlement and is ready for quantity consumption.",
+                expected_subcontractor,
+                expected_quantity=expected_qty,
                 consumes=True,
             )
         )
-    return AuditDataset(results=results, metadata=dataset.metadata)
+    return AuditDataset(results, metadata)
 
 
 def duplicate_resolver(dataset: AuditDataset) -> AuditDataset:
     results = list(dataset.results)
     pending = [idx for idx, result in enumerate(results) if result.consumes_quantity]
     pending.sort(key=lambda idx: results[idx].final_po.canonical.get("dispatch_sort_key"))
-    consumed: Dict[Tuple[str, str, str], float] = defaultdict(float)
 
+    consumed: Dict[Tuple[str, str, str, str], float] = defaultdict(float)
     for idx in pending:
         result = results[idx]
-        data = result.final_po.canonical
-        key = (
-            text(data.get("du")),
-            result.scope,
-            text(data.get("submitted_item_code")),
-        )
-        submitted_qty = to_float(data.get("submitted_quantity"), default=0.0)
-        remaining = max(result.expected_quantity - consumed[key], 0.0)
-        normal_qty = min(submitted_qty, remaining)
+        f = result.final_po.canonical
+        key = consumption_key(result)
+        submitted_qty = f.get("submitted_quantity", 0.0)
+        available = max(result.expected_quantity - consumed[key], 0.0)
+        normal_qty = min(submitted_qty, available)
         duplicate_qty = max(submitted_qty - normal_qty, 0.0)
         consumed[key] += normal_qty
-
-        if duplicate_qty > 0 and normal_qty > 0:
+        if duplicate_qty <= 0:
+            results[idx] = replace(
+                result,
+                classification="Normal",
+                reason_code="NORMAL_FULL",
+                normal_quantity=normal_qty,
+                duplicate_quantity=0.0,
+                explanation="Submitted quantity is within generated ECC entitlement.",
+                consumes_quantity=False,
+            )
+        elif normal_qty > 0:
             results[idx] = replace(
                 result,
                 classification="Abnormal - Duplicate PO",
                 reason_code="DUPLICATE_PARTIAL_QUANTITY",
                 normal_quantity=normal_qty,
                 duplicate_quantity=duplicate_qty,
-                explanation="Submitted quantity partially exceeds remaining expected quantity.",
+                explanation="Part of the submitted quantity exceeds generated ECC entitlement already consumed in this snapshot.",
                 consumes_quantity=False,
             )
-        elif duplicate_qty > 0:
+        else:
             results[idx] = replace(
                 result,
                 classification="Abnormal - Duplicate PO",
                 reason_code="DUPLICATE_FULL_QUANTITY",
                 normal_quantity=0.0,
                 duplicate_quantity=duplicate_qty,
-                explanation="Expected quantity was already exhausted by earlier valid claims.",
+                explanation="Submitted quantity exceeds generated ECC entitlement already consumed in this snapshot.",
                 consumes_quantity=False,
             )
-        else:
-            reason_code = "NORMAL_FULL" if normal_qty == submitted_qty else "NORMAL_PARTIAL"
-            results[idx] = replace(
-                result,
-                classification="Normal",
-                reason_code=reason_code,
-                normal_quantity=normal_qty,
-                duplicate_quantity=0.0,
-                explanation="Submitted claim matches expected item and available quantity.",
-                consumes_quantity=False,
-            )
-    return AuditDataset(results=results, metadata=dataset.metadata)
+    return AuditDataset(results, dataset.metadata)
 
 
-def report_writer(dataset: AuditDataset, output_path: Path, summary_json: Optional[Path]) -> Dict[str, Any]:
+def report_writer(dataset: AuditDataset, output: Path, summary_json: Optional[Path]) -> Dict[str, Any]:
     Workbook, _, Font, PatternFill = require_openpyxl()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "PR_Audit_Result"
 
-    source_headers = list(dataset.results[0].final_po.raw.keys()) if dataset.results else []
-    source_headers = [h for h in source_headers if h != "_source_row"]
-    audit_headers = [
-        "Source Row",
-        "Scope",
-        "Audit Result",
-        "Reason Code",
-        "Expected Item",
-        "Expected Quantity",
-        "Expected Subcontractor",
-        "Normal Quantity",
-        "Duplicate Quantity",
-        "EPMS Evidence",
-        "PR Model Evidence",
-        "Explanation",
-    ]
-    headers = source_headers + audit_headers
+    raw_headers = source_headers(dataset.results)
+    headers = raw_headers + AUDIT_HEADERS
+    for col_idx, header in enumerate(headers, 1):
+        cell = ws.cell(1, col_idx, header)
+        cell.font = Font(bold=True)
+        if col_idx > len(raw_headers):
+            cell.fill = PatternFill(start_color="D9EAF7", end_color="D9EAF7", fill_type="solid")
 
-    def row_values(result: AuditResult) -> List[Any]:
-        values = [result.final_po.raw.get(header) for header in source_headers]
-        values += [
+    for row_idx, result in enumerate(dataset.results, 2):
+        for col_idx, header in enumerate(raw_headers, 1):
+            ws.cell(row_idx, col_idx, result.final_po.raw.get(header))
+        audit_values = [
             result.final_po.source_row,
             result.scope,
             result.classification,
             result.reason_code,
-            "; ".join(item.code for item in result.expected_items),
+            expected_item_text(result.expected_items),
             result.expected_quantity,
             result.expected_subcontractor,
             result.normal_quantity,
             result.duplicate_quantity,
-            result.epms_evidence,
-            result.pr_model_evidence,
+            result.expected_evidence,
+            result.matched_evidence,
             result.explanation,
         ]
-        return values
+        for offset, value in enumerate(audit_values, 1):
+            ws.cell(row_idx, len(raw_headers) + offset, value)
 
-    if len(dataset.results) > 50000:
-        wb = Workbook(write_only=True)
-        ws = wb.create_sheet("audit_result")
-        ws.append(headers)
-        for result in dataset.results:
-            ws.append(row_values(result))
-        wb.save(output_path)
-    else:
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "audit_result"
-
-        header_fill = PatternFill(start_color="D9EAF7", end_color="D9EAF7", fill_type="solid")
-        header_font = Font(bold=True)
-
-        for col_idx, header in enumerate(headers, 1):
-            cell = ws.cell(1, col_idx, header)
-            cell.fill = header_fill
-            cell.font = header_font
-
-        for row_idx, result in enumerate(dataset.results, 2):
-            for col_idx, value in enumerate(row_values(result), 1):
-                ws.cell(row_idx, col_idx, value)
-
-        ws.freeze_panes = "A2"
-        for idx, header in enumerate(headers, 1):
-            width = min(max(len(str(header)) + 2, 12), 40)
-            ws.column_dimensions[column_name(idx)].width = width
-
-        wb.save(output_path)
+    for idx, header in enumerate(headers, 1):
+        width = min(max(len(str(header)) + 2, 12), 48)
+        ws.column_dimensions[column_name(idx)].width = width
+    wb.save(output)
 
     summary = {
-        "output": str(output_path),
         "total_rows": len(dataset.results),
         "classifications": dict(Counter(result.classification for result in dataset.results)),
         "reason_codes": dict(Counter(result.reason_code for result in dataset.results)),
         "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "metadata": dataset.metadata,
     }
     if summary_json:
         summary_json.parent.mkdir(parents=True, exist_ok=True)
@@ -717,31 +624,329 @@ def report_writer(dataset: AuditDataset, output_path: Path, summary_json: Option
     return summary
 
 
+def annotated_ecc_writer(
+    dataset: AuditDataset,
+    expected_ecc_files: Sequence[Path],
+    output_root: Path,
+    timestamp: Optional[str],
+    ecc_sheet: str,
+) -> Dict[str, Any]:
+    _, load_workbook, Font, PatternFill = require_openpyxl()
+    run_timestamp = timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = output_root / run_timestamp
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    annotation_index = build_ecc_annotation_index(dataset.results)
+    seen_output_names: set[str] = set()
+    file_summaries: List[Dict[str, Any]] = []
+    status_counts: Counter[str] = Counter()
+    reason_counts: Counter[str] = Counter()
+
+    for source_file in expected_ecc_files:
+        output_name = source_file.name
+        if output_name in seen_output_names:
+            raise ValueError(f"Duplicate annotated ECC output filename would overwrite another file: {output_name}")
+        seen_output_names.add(output_name)
+
+        wb = load_workbook(source_file)
+        if ecc_sheet not in wb.sheetnames:
+            raise ValueError(
+                f"Required worksheet '{ecc_sheet}' not found in {source_file}. "
+                f"Available sheets: {', '.join(wb.sheetnames)}"
+            )
+        ws = wb[ecc_sheet]
+        start_col = ws.max_column + 1
+        header_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+        for offset, header in enumerate(ECC_ANNOTATION_HEADERS):
+            cell = ws.cell(1, start_col + offset, header)
+            cell.font = Font(bold=True)
+            cell.fill = header_fill
+            width = min(max(len(header) + 2, 14), 42)
+            ws.column_dimensions[column_name(start_col + offset)].width = width
+
+        file_status_counts: Counter[str] = Counter()
+        annotated_rows = 0
+        for row_idx in range(2, ws.max_row + 1):
+            key = ecc_annotation_key(source_file.name, ws.title, row_idx)
+            values = annotation_values(annotation_index.get(key, []))
+            for offset, value in enumerate(values):
+                ws.cell(row_idx, start_col + offset, value)
+            status = text(values[0])
+            file_status_counts[status] += 1
+            status_counts[status] += 1
+            for reason in split_joined(values[1]):
+                reason_counts[reason] += 1
+            annotated_rows += 1
+
+        output_file = output_dir / output_name
+        wb.save(output_file)
+        wb.close()
+        file_summaries.append(
+            {
+                "source_file": str(source_file),
+                "output_file": str(output_file),
+                "worksheet": ecc_sheet,
+                "annotated_rows": annotated_rows,
+                "status_counts": dict(file_status_counts),
+            }
+        )
+
+    summary = {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "output_dir": str(output_dir),
+        "file_count": len(file_summaries),
+        "status_counts": dict(status_counts),
+        "reason_codes": dict(reason_counts),
+        "files": file_summaries,
+    }
+    summary_path = output_dir / "annotated_ecc.summary.json"
+    summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+    return summary
+
+
+def build_ecc_annotation_index(results: Sequence[AuditResult]) -> Dict[Tuple[str, str, int], List[AuditResult]]:
+    index: Dict[Tuple[str, str, int], List[AuditResult]] = defaultdict(list)
+    for result in results:
+        for key in parse_ecc_evidence_keys(result.matched_evidence):
+            index[key].append(result)
+    return index
+
+
+def ecc_annotation_key(source_file_name: str, source_sheet: str, source_row: int) -> Tuple[str, str, int]:
+    return (source_file_name, source_sheet, int(source_row))
+
+
+def parse_ecc_evidence_keys(evidence: str) -> List[Tuple[str, str, int]]:
+    keys: List[Tuple[str, str, int]] = []
+    for part in split_joined(evidence):
+        if part.startswith("... +"):
+            continue
+        match = re.match(r"(.+):([^:!]+)!(\d+)$", part)
+        if match:
+            keys.append(ecc_annotation_key(match.group(1), match.group(2), int(match.group(3))))
+    return keys
+
+
+def annotation_values(results: Sequence[AuditResult]) -> List[Any]:
+    if not results:
+        return ["NOT_IN_FINAL_PO", "", 0, 0.0, 0.0, 0.0, "", ""]
+
+    return [
+        aggregate_annotation_status(results),
+        join_unique(result.reason_code for result in results),
+        len(results),
+        sum(result.final_po.canonical.get("submitted_quantity", 0.0) for result in results),
+        sum(result.normal_quantity for result in results),
+        sum(result.duplicate_quantity for result in results),
+        join_unique(final_po_evidence(result) for result in results),
+        join_unique(result.explanation for result in results),
+    ]
+
+
+def aggregate_annotation_status(results: Sequence[AuditResult]) -> str:
+    statuses = {annotation_status(result.classification) for result in results}
+    if len(statuses) > 1:
+        return "MIXED"
+    return next(iter(statuses))
+
+
+def annotation_status(classification: str) -> str:
+    if classification == "Normal":
+        return "NORMAL"
+    if classification == "Abnormal - Duplicate PO":
+        return "DUPLICATE"
+    if classification == "Abnormal - Invalid PO":
+        return "INVALID"
+    if classification == "Abnormal - Wrong PO":
+        return "WRONG"
+    return text(classification).upper().replace(" ", "_") or "UNKNOWN"
+
+
+def final_po_evidence(result: AuditResult) -> str:
+    data = result.final_po.canonical
+    parts = [
+        f"Source Row={result.final_po.source_row}",
+        f"Request Number={text(data.get('request_number'))}",
+        f"Dispatch Order Number={text(data.get('dispatch_order_number'))}",
+        f"PO Line Number={text(data.get('po_line_number'))}",
+    ]
+    return "; ".join(part for part in parts if not part.endswith("="))
+
+
+def join_unique(values: Iterable[Any]) -> str:
+    seen: set[str] = set()
+    out: List[str] = []
+    for value in values:
+        value_text = text(value)
+        if value_text and value_text not in seen:
+            seen.add(value_text)
+            out.append(value_text)
+    return "; ".join(out)
+
+
+def split_joined(value: Any) -> List[str]:
+    return [part.strip() for part in text(value).split(";") if part.strip()]
+
+
 def run_pipeline(args: argparse.Namespace) -> Dict[str, Any]:
     final_po = require_file(Path(args.final_po), "Final PO")
-    epms = require_file(Path(args.epms), "EPMS")
-    pr_model = require_file(Path(args.pr_model), "PR Model")
+    ecc_files = expand_ecc_paths(args.expected_ecc)
     raw = workbook_reader(
-        final_po,
-        epms,
-        pr_model,
+        final_po=final_po,
+        expected_ecc_files=ecc_files,
         final_po_sheet=args.final_po_sheet,
         final_po_header_row=args.final_po_header_row,
-        epms_sheet=args.epms_sheet,
+        final_po_max_rows=args.final_po_max_rows,
+        ecc_sheet=args.ecc_sheet,
     )
     mapped = field_mapper(raw)
     canonical = canonical_builder(mapped)
-    matched = epms_matcher(canonical)
-    business = business_fact_builder(matched)
-    resolved = pr_model_resolver(business)
-    expected = expected_item_generator(resolved)
-    audited = audit_engine(expected)
+    matches = expected_matcher(canonical)
+    audited = audit_engine(matches, canonical.metadata)
     duplicated = duplicate_resolver(audited)
-    return report_writer(
+    summary = report_writer(
         duplicated,
         Path(args.output),
         Path(args.summary_json) if args.summary_json else None,
     )
+    if args.annotate_ecc_output:
+        summary["annotated_ecc"] = annotated_ecc_writer(
+            duplicated,
+            ecc_files,
+            Path(args.annotated_ecc_output_root),
+            args.annotated_ecc_timestamp,
+            args.ecc_sheet,
+        )
+    return summary
+
+
+def make_result(
+    match: ExpectedMatch,
+    classification: str,
+    reason_code: str,
+    explanation: str,
+    expected_subcontractor: str,
+    expected_quantity: Optional[float] = None,
+    consumes: bool = False,
+) -> AuditResult:
+    if expected_quantity is None:
+        submitted_code = match.final_po.canonical.get("submitted_item_code")
+        expected_quantity = sum(
+            item.canonical.get("expected_quantity", 0.0)
+            for item in match.exact_item_records
+            if item.canonical.get("expected_item_code") == submitted_code
+        )
+    return AuditResult(
+        final_po=match.final_po,
+        scope=match.scope,
+        classification=classification,
+        reason_code=reason_code,
+        expected_items=match.expected_items,
+        expected_subcontractor=expected_subcontractor,
+        expected_quantity=expected_quantity,
+        normal_quantity=0.0,
+        duplicate_quantity=0.0,
+        explanation=explanation,
+        expected_evidence=match.evidence,
+        matched_evidence=expected_evidence(match.exact_item_records),
+        consumes_quantity=consumes,
+    )
+
+
+def site_keys(data: Dict[str, Any]) -> List[str]:
+    return [key for key in [data.get("site_code"), data.get("du")] if key]
+
+
+def entitlement_key(data: Dict[str, Any]) -> Tuple[str, str, str, str]:
+    site_key = data.get("site_code") or data.get("du") or ""
+    return (
+        site_key,
+        data.get("scope") or "UNKNOWN",
+        data.get("expected_item_code") or "",
+        data.get("expected_subcontractor_norm") or "",
+    )
+
+
+def consumption_key(result: AuditResult) -> Tuple[str, str, str, str]:
+    f = result.final_po.canonical
+    site_key = f.get("site_code") or f.get("du") or ""
+    return (
+        site_key,
+        result.scope,
+        f.get("submitted_item_code") or "",
+        normalize_subcontractor(result.expected_subcontractor),
+    )
+
+
+def expected_evidence(records: Sequence[ExpectedECCRecord]) -> str:
+    if not records:
+        return ""
+    parts = []
+    for record in records[:20]:
+        parts.append(f"{Path(record.source_file).name}:{record.source_sheet}!{record.source_row}")
+    if len(records) > 20:
+        parts.append(f"... +{len(records) - 20} more")
+    return "; ".join(parts)
+
+
+def expected_item_text(records: Sequence[ExpectedECCRecord]) -> str:
+    items = []
+    for record in records:
+        code = text(record.canonical.get("expected_item_code"))
+        qty = record.canonical.get("expected_quantity", 0.0)
+        if code:
+            items.append(f"{code} x {qty:g}")
+    return "; ".join(items)
+
+
+def infer_scope_from_expected_or_final(records: Sequence[ExpectedECCRecord], final_po: FinalPORecord) -> str:
+    scopes = [text(record.canonical.get("scope")) for record in records if text(record.canonical.get("scope"))]
+    if scopes:
+        return sorted(set(scopes))[0] if len(set(scopes)) == 1 else "MULTI"
+    return infer_scope_from_final_po(final_po)
+
+
+def infer_scope_from_ecc(source_file: str) -> str:
+    name = Path(source_file).name.upper()
+    if " TSS PR " in name:
+        return "TSS"
+    if " TI PR " in name:
+        return "TI"
+    if " PLANNING PR " in name:
+        return "PLANNING"
+    if " OPERATION PR " in name or " OPERATION BACKOFFICE PR " in name:
+        return "OPERATION"
+    return "UNKNOWN"
+
+
+def infer_scope_from_final_po(record: FinalPORecord) -> str:
+    data = record.canonical
+    domain = text(data.get("business_domain")).lower()
+    description = text(data.get("submitted_item_description")).lower()
+    combined = f"{domain} {description}"
+    if "planning" in combined:
+        return "PLANNING"
+    if "operation" in combined or "backoffice" in combined:
+        return "OPERATION"
+    if "survey" in combined or "tss" in combined:
+        return "TSS"
+    if "installation" in combined or "antenna" in combined or "microwave" in combined:
+        return "TI"
+    return "UNKNOWN"
+
+
+def submitted_quantity(data: Dict[str, Any]) -> float:
+    for field in ("submitted_quantity", "settlement_quantity", "paid_quantity"):
+        qty = to_float(data.get(field), default=-1.0)
+        if qty >= 0:
+            return qty
+    return 0.0
+
+
+def source_headers(results: Sequence[AuditResult]) -> List[str]:
+    if not results:
+        return []
+    return [header for header in results[0].final_po.raw.keys() if not header.startswith("_")]
 
 
 def text(value: Any) -> str:
@@ -752,11 +957,26 @@ def text(value: Any) -> str:
     return str(value).strip()
 
 
-def first_nonempty(values: Iterable[Any]) -> Any:
-    for value in values:
-        if value not in (None, ""):
-            return value
-    return None
+def normalize_code(value: Any) -> str:
+    return text(value).upper()
+
+
+def normalize_subcontractor(value: Any) -> str:
+    raw = text(value).upper()
+    raw = raw.replace("&", " AND ")
+    raw = re.sub(
+        r"\b(SDN|BHD|SDN\.|BHD\.|BERHAD|LTD|LIMITED|ENGINEERING|TECHNOLOGY|TECHNOLOGIES|SCIENCE|MALAYSIA)\b",
+        " ",
+        raw,
+    )
+    raw = re.sub(r"[^A-Z0-9]+", " ", raw).strip()
+    if "GIROBUMI" in raw or raw == "GTSB":
+        return "GTSB"
+    if "GCI" in raw:
+        return "GCI"
+    if "ALL STAR" in raw or "ALLSTAR" in raw:
+        return "ALLSTAR"
+    return re.sub(r"\s+", " ", raw).strip()
 
 
 def to_float(value: Any, default: float = 0.0) -> float:
@@ -766,447 +986,6 @@ def to_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     match = re.search(r"-?\d+(?:\.\d+)?", str(value))
     return float(match.group(0)) if match else default
-
-
-def parse_antenna_size(value: Any) -> Optional[float]:
-    sizes = parse_antenna_sizes(value)
-    return max(sizes) if sizes else None
-
-
-def parse_antenna_sizes(value: Any) -> List[float]:
-    raw = text(value).replace(",", ".")
-    if not raw:
-        return []
-    sizes: List[float] = []
-    for match in re.findall(r"(\d+(?:\.\d+)?)", raw):
-        size = float(match)
-        if 0 < size <= 5.0:
-            sizes.append(size)
-    return sorted(set(sizes))
-
-
-def determine_ti_chosen_antenna_size(ne_size: Any, fe_size: Any) -> Optional[float]:
-    sizes = [size for size in [parse_antenna_size(ne_size), parse_antenna_size(fe_size)] if size is not None]
-    return max(sizes) if sizes else None
-
-
-def expected_antenna_code(ne_size: Any, fe_size: Any) -> Optional[str]:
-    sizes = [size for size in [parse_antenna_size(ne_size), parse_antenna_size(fe_size)] if size is not None]
-    if not sizes:
-        return None
-    size = max(sizes)
-    if size <= 0.6:
-        return "350001095405"
-    if size <= 1.2:
-        return "350001095406"
-    if size <= 1.8:
-        return "350001095407"
-    return "350001095408"
-
-
-def normalize_choice_category(value: Any) -> Optional[str]:
-    lower = text(value).lower()
-    if not lower:
-        return None
-    if "simple packing" in lower:
-        return "outbound_route"
-    if "partial material transportation" in lower:
-        return "material_route"
-    if "antenna" in lower and parse_antenna_sizes(lower):
-        return "antenna"
-    if "inland transportation" in lower:
-        return "inbound_route"
-    if "dismantling" in lower and "antenna" in lower:
-        return "antenna"
-    return "choose"
-
-
-def get_region_search_terms(region: Any) -> List[str]:
-    region_key = text(region).lower()
-    mapping = {
-        "northern": ["north region", "perlis", "kedah", "penang", "perak"],
-        "southern": ["south region", "negeri sembilan", "malacca", "johor"],
-        "eastern": ["east region", "pahang", "terengganu", "kelantan"],
-        "sabah": ["sabah"],
-        "sarawak": ["sarawak", "salawak", "kuching", "sibu", "bintulu", "miri", "limbang", "lawas", "sri aman"],
-        "central": ["kv region", "kv warehouse", "kuantan", "kk"],
-    }
-    return [term for term in mapping.get(region_key, [region_key]) if term]
-
-
-def row_text(row: Dict[str, Any]) -> str:
-    return " ".join([text(row.get("sow")), text(row.get("description")), text(row.get("rules"))])
-
-
-def row_matches_chosen_size(row: Dict[str, Any], chosen_size: Optional[float]) -> bool:
-    if chosen_size is None:
-        return False
-    return any(abs(size - chosen_size) < 1e-6 for size in parse_antenna_sizes(row_text(row)))
-
-
-def is_mw_hardware_cutover_row(row: Dict[str, Any]) -> bool:
-    return "mw hardware cutover" in row_text(row).lower()
-
-
-def is_mw_reroute_sow(sow: Any) -> bool:
-    lower = text(sow).lower()
-    return "mw" in lower and "reroute" in lower
-
-
-def classify_mw_reroute_model_row(row: Dict[str, Any]) -> str:
-    lower = row_text(row).lower()
-    if "new - mw link" in lower:
-        return "install"
-    if "mw dismantling" in lower and "antenna" in lower:
-        return "dismantle"
-    return "other"
-
-
-def row_matches_size_bucket(row: Dict[str, Any], chosen_size: Optional[float]) -> bool:
-    if chosen_size is None:
-        return False
-    normalized = row_text(row).replace(",", ".").lower()
-    if ">3.2" in normalized:
-        return chosen_size > 3.2
-    for first, second in re.findall(r"(\d+(?:\.\d+)?)\s*[-/]\s*(\d+(?:\.\d+)?)\s*m?", normalized):
-        low = float(first)
-        high = float(second)
-        if low <= chosen_size <= high:
-            return True
-    return row_matches_chosen_size(row, chosen_size)
-
-
-def select_mw_reroute_row(rows: List[Dict[str, Any]], chosen_size: Optional[float]) -> Tuple[Optional[Dict[str, Any]], str]:
-    matched = [row for row in rows if row_matches_size_bucket(row, chosen_size)]
-    if len(matched) == 1:
-        return matched[0], "matched"
-    if len(matched) > 1:
-        return None, "ambiguous"
-    return None, "missing"
-
-
-def match_mw_reroute_rows_like_create_pr_cd(
-    facts: Dict[str, Any],
-    ti_rows: List[Dict[str, Any]],
-) -> Tuple[List[Dict[str, Any]], List[str]]:
-    candidates = [
-        row
-        for row in ti_rows
-        if row.get("is_mandatory") and ("REROUTE" in text(row.get("sow")).upper() or text(row.get("sow")).upper() == "MW REROUTE")
-    ]
-    install_rows = [row for row in candidates if classify_mw_reroute_model_row(row) == "install"]
-    dismantle_rows = [row for row in candidates if classify_mw_reroute_model_row(row) == "dismantle"]
-
-    install_size = determine_ti_chosen_antenna_size(facts.get("antenna_size_ne"), facts.get("antenna_size_fe"))
-    selected_rows: List[Dict[str, Any]] = []
-    review_reasons: List[str] = []
-
-    install_row, install_status = select_mw_reroute_row(install_rows, install_size)
-    if install_row:
-        selected_rows.append(install_row)
-    else:
-        review_reasons.append(f"MW Reroute install item not matched ({install_status})")
-
-    # Dismantle antenna size detection in create-pr-cd uses contextual text
-    # parsing. Until that is ported fully, do not guess a dismantle row.
-    if dismantle_rows:
-        review_reasons.append("MW Reroute dismantle item requires contextual size resolver")
-
-    return selected_rows, review_reasons
-
-
-def normalize_subcontractor(value: Any) -> str:
-    raw = text(value).upper()
-    raw = raw.replace("&", " AND ")
-    raw = re.sub(r"\b(SDN|BHD|SDN\.|BHD\.|BERHAD|LTD|LIMITED|ENGINEERING|TECHNOLOGY|TECHNOLOGIES|SCIENCE|MALAYSIA|\\.|\\(|\\))\b", " ", raw)
-    raw = re.sub(r"\s+", " ", raw).strip()
-    if "GIROBUMI" in raw or raw == "GTSB":
-        return "GTSB"
-    if "GCI" in raw:
-        return "GCI"
-    if "ALL STAR" in raw or "ALLSTAR" in raw:
-        return "ALLSTAR"
-    if "SERIKANDI" in raw or "SERI PANCAR" in raw:
-        return re.sub(r"\s+", " ", raw).strip()
-    return raw
-
-
-def infer_scope(record: FinalPORecord) -> str:
-    data = record.canonical
-    code = text(data.get("submitted_item_code"))
-    domain = text(data.get("business_domain"))
-    description = text(data.get("submitted_item_description"))
-    combined = f"{domain} {description}".lower()
-    if code == PLANNING_ITEM_CODE:
-        return "PLANNING"
-    if code == OPERATION_ITEM_CODE:
-        return "OPERATION"
-    if "勘察" in domain or "survey" in combined or "tss" in combined:
-        return "TSS"
-    if "微波" in domain or "installation" in combined or "antenna" in combined or code in ANTENNA_ITEM_CODES:
-        return "TI"
-    return "UNKNOWN"
-
-
-def build_business_facts(epms: Optional[EPMSRecord]) -> Dict[str, Any]:
-    if epms is None:
-        return {}
-    return dict(epms.canonical)
-
-
-def expected_subcontractor(scope: str, facts: Dict[str, Any]) -> str:
-    if scope == "TSS":
-        return text(facts.get("expected_tss_subcontractor"))
-    if scope == "TI":
-        return text(facts.get("expected_ti_subcontractor"))
-    if scope == "PLANNING":
-        return text(facts.get("expected_planning_subcontractor"))
-    if scope == "OPERATION":
-        return "Allstar"
-    return ""
-
-
-def expected_items_for_record(record: BusinessRecord, pr_model_rows: List[Dict[str, Any]]) -> Tuple[List[ExpectedItem], str]:
-    facts = record.business_facts
-    scope = record.scope
-    if record.epms is None:
-        return [], "No EPMS match"
-    if scope == "PLANNING":
-        return [ExpectedItem(PLANNING_ITEM_CODE, 1.0, scope, "Confirmed Planning rule")], "Planning fixed rule"
-    if scope == "OPERATION":
-        if not facts.get("integration_end_date"):
-            return [], "Operation trigger missing"
-        return [ExpectedItem(OPERATION_ITEM_CODE, 1.0, scope, "Confirmed Operation rule")], "Operation fixed rule"
-    if scope == "TSS":
-        return expected_items_from_pr_model(scope, facts, pr_model_rows)
-    if scope == "TI":
-        return expected_ti_items_like_create_pr_cd(facts, pr_model_rows)
-    return [], "Unsupported scope"
-
-
-def expected_items_from_pr_model(scope: str, facts: Dict[str, Any], rows: List[Dict[str, Any]]) -> Tuple[List[ExpectedItem], str]:
-    tx_sow = text(facts.get("tx_sow")).upper()
-    if not tx_sow:
-        return [], f"{scope}: missing EPMS Tx SOW"
-    items: List[ExpectedItem] = []
-    evidence_rows: List[str] = []
-    for row in rows:
-        if row.get("section") != scope:
-            continue
-        rules = text(row.get("rules")).upper()
-        if "MANDATORY" not in rules:
-            continue
-        sow = text(row.get("sow")).upper()
-        if sow and (sow in tx_sow or tx_sow in sow):
-            items.append(
-                ExpectedItem(
-                    code=text(row.get("code")),
-                    quantity=to_float(row.get("quantity"), default=1.0),
-                    scope=scope,
-                    reason=f"PR Model row {row.get('source_row')}",
-                )
-            )
-            evidence_rows.append(f"{row.get('worksheet')}!{row.get('source_row')}")
-    if not items:
-        return [], f"{scope}: no mandatory PR Model match for Tx SOW={tx_sow}"
-    return dedupe_expected_items(items), "; ".join(evidence_rows)
-
-
-def expected_ti_items_like_create_pr_cd(facts: Dict[str, Any], rows: List[Dict[str, Any]]) -> Tuple[List[ExpectedItem], str]:
-    tx_sow = text(facts.get("tx_sow"))
-    if not tx_sow:
-        return [], "TI: missing EPMS Tx SOW"
-
-    ti_rows = [row for row in rows if row.get("section") == "TI"]
-    chosen_size = determine_ti_chosen_antenna_size(
-        facts.get("antenna_size_ne"),
-        facts.get("antenna_size_fe"),
-    )
-
-    if is_mw_reroute_sow(tx_sow):
-        selected_rows, review_reasons = match_mw_reroute_rows_like_create_pr_cd(facts, ti_rows)
-        if review_reasons and not selected_rows:
-            return [], "TI MW Reroute unresolved: " + "; ".join(review_reasons)
-    else:
-        selected_rows, review_required = match_ti_rows_like_create_pr_cd(
-            tx_sow,
-            chosen_size,
-            text(facts.get("epms_region")),
-            ti_rows,
-        )
-        if review_required and not selected_rows:
-            return [], "TI choose-group unresolved using create-pr-cd selection rules"
-
-    if not selected_rows:
-        return [], f"TI: no mandatory PR Model match for Tx SOW={tx_sow}"
-
-    items = [
-        ExpectedItem(
-            code=text(row.get("code")),
-            quantity=to_float(row.get("quantity"), default=1.0),
-            scope="TI",
-            reason=f"create-pr-cd PR Model row {row.get('source_row')}",
-        )
-        for row in selected_rows
-    ]
-    evidence = "; ".join(f"{row.get('worksheet')}!{row.get('source_row')}" for row in selected_rows)
-    return dedupe_expected_items(items), evidence
-
-
-def match_ti_rows_like_create_pr_cd(
-    sow: str,
-    chosen_size: Optional[float],
-    region: str,
-    ti_rows: List[Dict[str, Any]],
-) -> Tuple[List[Dict[str, Any]], bool]:
-    sow_upper = sow.upper()
-    candidates: List[Dict[str, Any]] = []
-    for row in ti_rows:
-        item_sow_upper = text(row.get("sow")).upper()
-        if item_sow_upper == sow_upper or item_sow_upper in sow_upper or sow_upper in item_sow_upper:
-            if row.get("is_mandatory") and not is_mw_hardware_cutover_row(row):
-                candidates.append(row)
-
-    if not candidates:
-        return [], False
-
-    grouped_candidates: Dict[Tuple[str, ...], List[Dict[str, Any]]] = {}
-    for row in candidates:
-        rules = text(row.get("rules")).lower()
-        if "choose" in rules:
-            group_key = (
-                text(row.get("sow")),
-                text(row.get("rules")),
-                text(normalize_choice_category(" ".join([text(row.get("sow")), text(row.get("description")), text(row.get("rules"))]))),
-            )
-        else:
-            group_key = (text(row.get("code")),)
-        grouped_candidates.setdefault(group_key, []).append(row)
-
-    selected_rows: List[Dict[str, Any]] = []
-    review_required = False
-    choose_group_ambiguous = False
-    for group_rows in grouped_candidates.values():
-        if len(group_rows) == 1:
-            selected_rows.extend(group_rows)
-            continue
-
-        rules = text(group_rows[0].get("rules")).lower()
-        if "choose" in rules:
-            chosen_rows, ambiguous = filter_choose_group_rows_like_create_pr_cd(group_rows, chosen_size, region)
-            selected_rows.extend(chosen_rows)
-            if ambiguous:
-                review_required = True
-                choose_group_ambiguous = True
-        else:
-            selected_rows.extend(group_rows)
-            if len(group_rows) > 1:
-                review_required = True
-
-    if choose_group_ambiguous:
-        return [], True
-
-    return selected_rows, review_required
-
-
-def filter_choose_group_rows_like_create_pr_cd(
-    group_rows: List[Dict[str, Any]],
-    chosen_size: Optional[float],
-    region: str,
-) -> Tuple[List[Dict[str, Any]], bool]:
-    if len(group_rows) <= 1:
-        return group_rows, False
-
-    category = normalize_choice_category(
-        " ".join([text(group_rows[0].get("sow")), text(group_rows[0].get("description")), text(group_rows[0].get("rules"))])
-    )
-
-    if category == "antenna":
-        matched = [row for row in group_rows if row_matches_chosen_size(row, chosen_size)]
-        return (matched, False) if len(matched) == 1 else ([], True)
-
-    if category in {"material_route", "choose"}:
-        for term in get_region_search_terms(region):
-            matched = [
-                row
-                for row in group_rows
-                if term in " ".join([text(row.get("sow")), text(row.get("description")), text(row.get("rules"))]).lower()
-            ]
-            if len(matched) == 1:
-                return matched, False
-        return [], True
-
-    # create-pr-cd uses GeographyResolver for these route groups. The auditor
-    # currently fails closed until that resolver is wired in.
-    if category in {"outbound_route", "inbound_route"}:
-        return [], True
-
-    return [], True
-
-
-def dedupe_expected_items(items: List[ExpectedItem]) -> List[ExpectedItem]:
-    by_code: Dict[Tuple[str, str], ExpectedItem] = {}
-    for item in items:
-        key = (item.scope, item.code)
-        if key in by_code:
-            previous = by_code[key]
-            by_code[key] = replace(previous, quantity=previous.quantity + item.quantity)
-        else:
-            by_code[key] = item
-    return list(by_code.values())
-
-
-def wrong_reason_for_submitted_code(business: BusinessRecord, submitted_code: str) -> str:
-    if business.scope == "TI" and submitted_code in ANTENNA_ITEM_CODES:
-        return "WRONG_ANTENNA_SIZE"
-    if business.scope == "TI":
-        return "WRONG_LINE_ITEM_MAPPING"
-    if business.scope in {"TSS", "PLANNING", "OPERATION"}:
-        return "WRONG_LINE_ITEM_MAPPING"
-    return "INVALID_WRONG_DOMAIN"
-
-
-def make_result(
-    expected_record: ExpectedRecord,
-    classification: str,
-    reason_code: str,
-    explanation: str,
-    epms_evidence: str,
-    expected_quantity: Optional[float] = None,
-    consumes: bool = False,
-) -> AuditResult:
-    if expected_quantity is None:
-        submitted_code = text(expected_record.business_record.final_po.canonical.get("submitted_item_code"))
-        expected_quantity = sum(
-            item.quantity for item in expected_record.expected_items if item.code == submitted_code
-        )
-    return AuditResult(
-        final_po=expected_record.business_record.final_po,
-        scope=expected_record.business_record.scope,
-        classification=classification,
-        reason_code=reason_code,
-        expected_items=expected_record.expected_items,
-        expected_subcontractor=expected_record.expected_subcontractor,
-        expected_quantity=expected_quantity,
-        normal_quantity=0.0,
-        duplicate_quantity=0.0,
-        explanation=explanation,
-        epms_evidence=epms_evidence,
-        pr_model_evidence=expected_record.model_evidence,
-        consumes_quantity=consumes,
-    )
-
-
-def epms_evidence_text(record: BusinessRecord) -> str:
-    if record.epms is None:
-        return "No EPMS match"
-    facts = record.business_facts
-    return (
-        f"EPMS row {record.epms.source_row}; "
-        f"DU={facts.get('du')}; "
-        f"Tx SOW={facts.get('tx_sow')}; "
-        f"Region={facts.get('epms_region')}"
-    )
 
 
 def dispatch_sort_key(data: Dict[str, Any]) -> Tuple[Any, str, str, int]:

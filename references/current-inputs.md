@@ -1,45 +1,36 @@
 # Current TX PR Auditor Inputs
 
-Use this reference for the current local workbook contract. The auditor validates `Final PO.xlsx` after `create-pr-cd` work has produced or refreshed the submitted PO population.
+Use this reference for the current local workbook contract. The auditor validates `Final PO.xlsx` after `create-pr-cd` has generated ECC output.
 
 ## Paths
 
-Current fixture paths:
+The runtime must accept explicit paths from the caller. Do not discover files by scanning directories.
+
+Typical local paths:
 
 ```text
-.openclaw/skills/tx-pr-auditor/input/Final PO.xlsx
-.openclaw/skills/tx-pr-auditor/input/EPMS.xlsx
-.openclaw/skills/tx-pr-auditor/input/pr_model.xlsx
+skills/tx-pr-auditor/input/Final PO.xlsx
+skills/create-pr-cd/output/
+skills/tx-pr-auditor/output/PR_Audit_Result.xlsx
 ```
-
-The runtime must still accept explicit paths from the caller. Do not discover files by scanning directories.
 
 ## Workbook Handling
 
 Final PO:
 
-- Use worksheet name `条目明细`.
-- Header row: row `1`.
-- Current dimension observed: `A1:AN1000`.
+- Worksheet name: `æ¡ç›®æ˜Žç»†`
+- Header row: row `1`
 
-EPMS:
+Generated ECC:
 
-- Use worksheet name `data`.
-- Machine/source headers occupy rows `1` to `3`.
-- Human-readable implementation headers are on row `4`.
-- Data starts on row `5`.
-- Current dimension observed: `A1:EL1000`.
-
-PR Model:
-
-- Use the supplied workbook only.
-- Current filename is `pr_model.xlsx`.
-- Current primary sheet observed: `TX Line Item (After 21-Apr 26)`.
-- The implementation must select applicable worksheet/rules by worksheet effective date metadata where available, not by filename alone.
+- Worksheet name: `details`
+- Header row: row `1`
+- Accept `.xlsx` and `.xlsm` files.
+- Accept a directory containing generated ECC workbooks.
 
 ## Final PO Field Map
 
-Map these Chinese Final PO headers into canonical fields:
+Map these Final PO headers into canonical fields. The implementation accepts the real Chinese headers shown here and the older mojibake aliases retained for backward compatibility.
 
 | Final PO header | Canonical field |
 |---|---|
@@ -49,7 +40,7 @@ Map these Chinese Final PO headers into canonical fields:
 | `需求单号` | request_number |
 | `项目名称` | project_name |
 | `项目编码` | project_code |
-| `业务大类` | business_domain |
+| `业务大类` or `能力大类` | business_domain |
 | `施工区域` | region |
 | `采购区域` | purchasing_area |
 | `分包商` | submitted_subcontractor |
@@ -67,41 +58,27 @@ Map these Chinese Final PO headers into canonical fields:
 | `派工单状态` | dispatch_status |
 | `外包商编码` | subcontractor_code |
 
-## EPMS Field Map
+## Generated ECC Field Map
 
-Read EPMS using row `4` as the human-readable header row.
+Map these generated ECC headers into canonical fields:
 
-Key canonical fields:
-
-| EPMS header | Canonical field |
+| ECC header | Canonical field |
 |---|---|
-| `customer site code` | site_code |
-| `customer site name` | site_name |
-| `du code` | du |
-| `region` | epms_region |
-| `Province/State` | province_state |
-| `Latitude (North Plus South Minus)` | latitude |
-| `Longitude (East Plus West Minus)` | longitude |
-| `TX Upgrade Scope` | tx_upgrade_scope |
-| `BOQ Configuration` | boq_configuration |
-| `Tx SOW` | tx_sow |
-| `TX SOW Details` | tx_sow_details |
-| `NE SOW Details` | ne_sow_details |
-| `FE SOW Details` | fe_sow_details |
-| `MW Config Antenna Size NE` | antenna_size_ne |
-| `MW Config Antenna Size FE` | antenna_size_fe |
-| `SubCon - TSS Team` | expected_tss_subcontractor |
-| `Subcon PR - TSS` | existing_tss_pr |
-| `SubCon - TI Team` | expected_ti_subcontractor |
-| `Subcon PR - TI` | existing_ti_pr |
-| `TX Cutover Date` | tx_cutover_date |
-| `Subcon - Planning` | expected_planning_subcontractor |
-| `Subcon PR - Planning` | existing_planning_pr |
-
-Operation/integration trigger fields must be confirmed during implementation because EPMS contains repeated `actual end time` columns under grouped source headers. Preserve source column address/evidence when mapping these fields.
+| `SN.` | sn |
+| `Purchasing Area*` | purchasing_area |
+| `Region*` | region |
+| `Site ID*` | site_code |
+| `Site Name*` | site_name |
+| `Delivery Unit Code*` | du |
+| `Logical Site Name` | logical_site_name |
+| `Contract Number *` | contract_number |
+| `Subcontractor*` | expected_subcontractor |
+| `PBOM Code*` | expected_item_code |
+| `SOW*` | expected_item_description |
+| `Unit*` | expected_unit |
+| `Quantity*` | expected_quantity |
+| `Remarks` | remarks |
 
 ## Post-create-pr-cd Validation Role
 
-The auditor validates submitted PO rows in `Final PO.xlsx`. It does not generate ECC files and must not call or modify `create-pr-cd/scripts/generate_tss_pr_ecc.py`.
-
-Use `create-pr-cd` knowledge only as reference context for PR model behavior and field semantics. Keep audit implementation independent.
+The auditor validates submitted PO rows in `Final PO.xlsx` against generated ECC rows. It does not generate ECC files, does not call `create-pr-cd`, and does not read EPMS or PR Model workbooks.
