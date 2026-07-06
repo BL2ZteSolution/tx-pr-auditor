@@ -190,6 +190,12 @@ def parse_args() -> argparse.Namespace:
         help="Worksheet name to read from Final PO.xlsx",
     )
     parser.add_argument(
+        "--final-po-header-row",
+        type=int,
+        default=1,
+        help="1-based header row number in Final PO.xlsx",
+    )
+    parser.add_argument(
         "--epms",
         default="input/EPMS.xlsx",
         help="Path to EPMS.xlsx",
@@ -252,6 +258,14 @@ def unique_headers(headers: Sequence[Any]) -> List[str]:
     return out
 
 
+def trim_trailing_empty(values: Sequence[Any]) -> List[Any]:
+    last_nonempty = 0
+    for idx, value in enumerate(values, 1):
+        if value not in (None, ""):
+            last_nonempty = idx
+    return list(values[:last_nonempty])
+
+
 def read_table(path: Path, sheet_name: str, header_row: int) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     _, load_workbook, _, _ = require_openpyxl()
     wb = load_workbook(path, read_only=True, data_only=True)
@@ -261,13 +275,22 @@ def read_table(path: Path, sheet_name: str, header_row: int) -> Tuple[List[Dict[
             f"Available sheets: {', '.join(wb.sheetnames)}"
         )
     ws = wb[sheet_name]
-    header_values = [cell.value for cell in next(ws.iter_rows(min_row=header_row, max_row=header_row))]
+    header_values = trim_trailing_empty(
+        [cell.value for cell in next(ws.iter_rows(min_row=header_row, max_row=header_row))]
+    )
     headers = unique_headers(header_values)
     rows: List[Dict[str, Any]] = []
+    consecutive_blank_rows = 0
+    max_blank_tail_rows = 1000
     for row_idx, row in enumerate(ws.iter_rows(min_row=header_row + 1, values_only=True), header_row + 1):
-        if not any(value not in (None, "") for value in row):
+        values = list(row[: len(headers)])
+        if not any(value not in (None, "") for value in values):
+            consecutive_blank_rows += 1
+            if consecutive_blank_rows >= max_blank_tail_rows:
+                break
             continue
-        record = {headers[i]: row[i] if i < len(row) else None for i in range(len(headers))}
+        consecutive_blank_rows = 0
+        record = {headers[i]: values[i] if i < len(values) else None for i in range(len(headers))}
         record["_source_row"] = row_idx
         rows.append(record)
     return rows, {
@@ -323,9 +346,10 @@ def workbook_reader(
     epms: Path,
     pr_model: Path,
     final_po_sheet: str = FINAL_PO_SHEET_NAME,
+    final_po_header_row: int = 1,
     epms_sheet: str = EPMS_SHEET_NAME,
 ) -> RawDataset:
-    final_po_rows, final_meta = read_table(final_po, sheet_name=final_po_sheet, header_row=1)
+    final_po_rows, final_meta = read_table(final_po, sheet_name=final_po_sheet, header_row=final_po_header_row)
     epms_rows, epms_meta = read_table(epms, sheet_name=epms_sheet, header_row=4)
     pr_rows, pr_meta = read_pr_model(pr_model)
     return RawDataset(
@@ -612,9 +636,6 @@ def duplicate_resolver(dataset: AuditDataset) -> AuditDataset:
 def report_writer(dataset: AuditDataset, output_path: Path, summary_json: Optional[Path]) -> Dict[str, Any]:
     Workbook, _, Font, PatternFill = require_openpyxl()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "audit_result"
 
     source_headers = list(dataset.results[0].final_po.raw.keys()) if dataset.results else []
     source_headers = [h for h in source_headers if h != "_source_row"]
@@ -633,17 +654,10 @@ def report_writer(dataset: AuditDataset, output_path: Path, summary_json: Option
         "Explanation",
     ]
     headers = source_headers + audit_headers
-    header_fill = PatternFill(start_color="D9EAF7", end_color="D9EAF7", fill_type="solid")
-    header_font = Font(bold=True)
 
-    for col_idx, header in enumerate(headers, 1):
-        cell = ws.cell(1, col_idx, header)
-        cell.fill = header_fill
-        cell.font = header_font
-
-    for row_idx, result in enumerate(dataset.results, 2):
-        row_values = [result.final_po.raw.get(header) for header in source_headers]
-        row_values += [
+    def row_values(result: AuditResult) -> List[Any]:
+        values = [result.final_po.raw.get(header) for header in source_headers]
+        values += [
             result.final_po.source_row,
             result.scope,
             result.classification,
@@ -657,15 +671,38 @@ def report_writer(dataset: AuditDataset, output_path: Path, summary_json: Option
             result.pr_model_evidence,
             result.explanation,
         ]
-        for col_idx, value in enumerate(row_values, 1):
-            ws.cell(row_idx, col_idx, value)
+        return values
 
-    ws.freeze_panes = "A2"
-    for idx, header in enumerate(headers, 1):
-        width = min(max(len(str(header)) + 2, 12), 40)
-        ws.column_dimensions[column_name(idx)].width = width
+    if len(dataset.results) > 50000:
+        wb = Workbook(write_only=True)
+        ws = wb.create_sheet("audit_result")
+        ws.append(headers)
+        for result in dataset.results:
+            ws.append(row_values(result))
+        wb.save(output_path)
+    else:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "audit_result"
 
-    wb.save(output_path)
+        header_fill = PatternFill(start_color="D9EAF7", end_color="D9EAF7", fill_type="solid")
+        header_font = Font(bold=True)
+
+        for col_idx, header in enumerate(headers, 1):
+            cell = ws.cell(1, col_idx, header)
+            cell.fill = header_fill
+            cell.font = header_font
+
+        for row_idx, result in enumerate(dataset.results, 2):
+            for col_idx, value in enumerate(row_values(result), 1):
+                ws.cell(row_idx, col_idx, value)
+
+        ws.freeze_panes = "A2"
+        for idx, header in enumerate(headers, 1):
+            width = min(max(len(str(header)) + 2, 12), 40)
+            ws.column_dimensions[column_name(idx)].width = width
+
+        wb.save(output_path)
 
     summary = {
         "output": str(output_path),
@@ -689,6 +726,7 @@ def run_pipeline(args: argparse.Namespace) -> Dict[str, Any]:
         epms,
         pr_model,
         final_po_sheet=args.final_po_sheet,
+        final_po_header_row=args.final_po_header_row,
         epms_sheet=args.epms_sheet,
     )
     mapped = field_mapper(raw)
