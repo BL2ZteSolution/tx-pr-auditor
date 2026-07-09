@@ -20,7 +20,11 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
-FINAL_PO_SHEET_NAME = "æ¡ç›®æ˜Žç»†"
+FINAL_PO_SHEET_NAME = "条目明细"
+FINAL_PO_FORMATS = (
+    ("条目明细", 1),
+    ("Sheet1", 2),
+)
 ECC_SHEET_NAME = "details"
 
 FINAL_PO_FIELD_MAP = {
@@ -186,8 +190,15 @@ def parse_args() -> argparse.Namespace:
         description="Validate Final PO.xlsx against create-pr-cd generated ECC output."
     )
     parser.add_argument("--final-po", default="input/Final PO.xlsx", help="Path to Final PO.xlsx")
-    parser.add_argument("--final-po-sheet", default=FINAL_PO_SHEET_NAME, help="Final PO worksheet name")
-    parser.add_argument("--final-po-header-row", type=int, default=1, help="1-based Final PO header row")
+    parser.add_argument(
+        "--final-po-sheet",
+        help="Final PO worksheet name. By default, auto-detect 条目明细 or Sheet1.",
+    )
+    parser.add_argument(
+        "--final-po-header-row",
+        type=int,
+        help="1-based Final PO header row. By default, use row 1 for 条目明细 and row 2 for Sheet1.",
+    )
     parser.add_argument("--final-po-max-rows", type=int, help="Optional maximum number of Final PO data rows to read")
     parser.add_argument(
         "--expected-ecc",
@@ -310,7 +321,7 @@ def read_table(
         record["_source_file"] = str(path)
         record["_source_sheet"] = ws.title
         rows.append(record)
-    return rows, {
+    metadata = {
         "path": str(path),
         "sheet": ws.title,
         "header_row": header_row,
@@ -318,16 +329,58 @@ def read_table(
         "max_data_rows": max_data_rows,
         "column_count": len(headers),
     }
+    wb.close()
+    return rows, metadata
+
+
+def resolve_final_po_layout(
+    path: Path,
+    requested_sheet: Optional[str],
+    requested_header_row: Optional[int],
+) -> Tuple[str, int]:
+    _, load_workbook, _, _ = require_openpyxl()
+    wb = load_workbook(path, read_only=True, data_only=True)
+    try:
+        if requested_sheet:
+            if requested_sheet not in wb.sheetnames:
+                raise ValueError(
+                    f"Required worksheet '{requested_sheet}' not found in {path}. "
+                    f"Available sheets: {', '.join(wb.sheetnames)}"
+                )
+            sheet_name = requested_sheet
+        else:
+            sheet_name = next(
+                (candidate for candidate, _ in FINAL_PO_FORMATS if candidate in wb.sheetnames),
+                "",
+            )
+            if not sheet_name:
+                supported = ", ".join(name for name, _ in FINAL_PO_FORMATS)
+                raise ValueError(
+                    f"No supported Final PO worksheet found in {path}. "
+                    f"Expected one of: {supported}. Available sheets: {', '.join(wb.sheetnames)}"
+                )
+
+        header_row = requested_header_row or dict(FINAL_PO_FORMATS).get(sheet_name, 1)
+        if header_row < 1:
+            raise ValueError("Final PO header row must be 1 or greater.")
+        return sheet_name, header_row
+    finally:
+        wb.close()
 
 
 def workbook_reader(
     final_po: Path,
     expected_ecc_files: Sequence[Path],
-    final_po_sheet: str,
-    final_po_header_row: int,
+    final_po_sheet: Optional[str],
+    final_po_header_row: Optional[int],
     final_po_max_rows: Optional[int],
     ecc_sheet: str,
 ) -> RawDataset:
+    final_po_sheet, final_po_header_row = resolve_final_po_layout(
+        final_po,
+        final_po_sheet,
+        final_po_header_row,
+    )
     final_po_rows, final_meta = read_table(final_po, final_po_sheet, final_po_header_row, final_po_max_rows)
     ecc_rows: List[Dict[str, Any]] = []
     ecc_meta = []

@@ -76,6 +76,52 @@ def run_pipeline_for_records(final_records, expected_records):
 
 
 class TxPrAuditorTests(unittest.TestCase):
+    def test_final_po_layout_auto_detects_supported_formats(self):
+        try:
+            from openpyxl import Workbook
+        except ModuleNotFoundError:
+            self.skipTest("openpyxl is required for workbook layout test")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            for sheet_name, header_row in (("条目明细", 1), ("Sheet1", 2)):
+                workbook_path = tmp_path / f"{sheet_name}.xlsx"
+                wb = Workbook()
+                ws = wb.active
+                ws.title = sheet_name
+                if header_row == 2:
+                    ws.cell(1, 36, "PM/TL to feedback")
+                ws.cell(header_row, 1, "派工日期")
+                ws.cell(header_row, 2, "派工单号")
+                ws.cell(header_row + 1, 1, datetime(2026, 1, 2))
+                ws.cell(header_row + 1, 2, "DO-SYN-001")
+                wb.save(workbook_path)
+
+                resolved = audit.resolve_final_po_layout(workbook_path, None, None)
+                rows, metadata = audit.read_table(workbook_path, *resolved)
+
+                self.assertEqual(resolved, (sheet_name, header_row))
+                self.assertEqual(metadata["sheet"], sheet_name)
+                self.assertEqual(metadata["header_row"], header_row)
+                self.assertEqual(rows[0]["派工单号"], "DO-SYN-001")
+
+    def test_final_po_layout_preserves_explicit_overrides(self):
+        try:
+            from openpyxl import Workbook
+        except ModuleNotFoundError:
+            self.skipTest("openpyxl is required for workbook layout test")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workbook_path = Path(tmpdir) / "custom.xlsx"
+            wb = Workbook()
+            wb.active.title = "Custom"
+            wb.save(workbook_path)
+
+            self.assertEqual(
+                audit.resolve_final_po_layout(workbook_path, "Custom", 3),
+                ("Custom", 3),
+            )
+
     def test_valid_row_is_normal_against_create_pr_cd_output(self):
         results = run_pipeline_for_records([final_record()], [expected_record()])
 
