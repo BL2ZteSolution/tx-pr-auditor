@@ -18,8 +18,9 @@ skills/tx-pr-auditor/output/PR_Audit_Result.xlsx
 
 Final PO:
 
-- Worksheet name: `æ¡ç›®æ˜Žç»†`
-- Header row: row `1`
+- Auto-detect worksheet `条目明细` with header row `1`.
+- Auto-detect worksheet `Sheet1` with header row `2`.
+- Allow callers to override the worksheet and header row explicitly.
 
 Generated ECC:
 

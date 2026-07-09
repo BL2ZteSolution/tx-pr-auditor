@@ -34,8 +34,8 @@ Do not search the workspace for inputs.
 
 Final PO defaults:
 
-- Worksheet: `æ¡ç›®æ˜Žç»†`
-- Header row: `1`
+- Auto-detect worksheet `条目明细` with header row `1`
+- Auto-detect worksheet `Sheet1` with header row `2`
 
 Generated ECC defaults:
 
@@ -65,13 +65,14 @@ Run from `skills/tx-pr-auditor`:
 ```bash
 python scripts/audit_final_po.py \
   --final-po "input/Final PO.xlsx" \
-  --final-po-sheet "æ¡ç›®æ˜Žç»†" \
   --expected-ecc "../create-pr-cd/output" \
   --output "output/PR_Audit_Result.xlsx" \
   --summary-json "output/PR_Audit_Result.summary.json"
 ```
 
 Use repeated `--expected-ecc` arguments for multiple files or directories.
+
+Use `--final-po-sheet` and `--final-po-header-row` only to override format auto-detection.
 
 Use `--final-po-max-rows <n>` only for bounded smoke tests or debugging large exports.
 
