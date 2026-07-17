@@ -72,6 +72,8 @@ python scripts/audit_final_po.py \
 
 Use repeated `--expected-ecc` arguments for multiple files or directories.
 
+Use `--filter-year <YYYY> --filter-month <1-12>` together to audit only Final PO rows whose Dispatch Date falls in that period.
+
 Use `--final-po-sheet` and `--final-po-header-row` only to override format auto-detection.
 
 Use `--final-po-max-rows <n>` only for bounded smoke tests or debugging large exports.

@@ -76,6 +76,23 @@ def run_pipeline_for_records(final_records, expected_records):
 
 
 class TxPrAuditorTests(unittest.TestCase):
+    def test_filter_final_po_period_keeps_only_matching_dispatch_month(self):
+        january = final_record(source_row=2, dispatch_date=datetime(2026, 1, 3))
+        february = final_record(source_row=3, dispatch_date="2026-02-04")
+        invalid_date = final_record(source_row=4, dispatch_date="not-a-date")
+        dataset = audit.CanonicalDataset([january, february, invalid_date], [], {})
+
+        filtered = audit.filter_final_po_period(dataset, 2026, 2)
+
+        self.assertEqual([record.source_row for record in filtered.final_po_records], [3])
+        self.assertEqual(filtered.metadata["final_po_period_filter"]["input_row_count"], 3)
+        self.assertEqual(filtered.metadata["final_po_period_filter"]["matched_row_count"], 1)
+
+    def test_filter_final_po_period_requires_year_and_month_together(self):
+        dataset = audit.CanonicalDataset([], [], {})
+        with self.assertRaisesRegex(ValueError, "provided together"):
+            audit.filter_final_po_period(dataset, 2026, None)
+
     def test_final_po_layout_auto_detects_supported_formats(self):
         try:
             from openpyxl import Workbook

@@ -200,6 +200,8 @@ def parse_args() -> argparse.Namespace:
         help="1-based Final PO header row. By default, use row 1 for 条目明细 and row 2 for Sheet1.",
     )
     parser.add_argument("--final-po-max-rows", type=int, help="Optional maximum number of Final PO data rows to read")
+    parser.add_argument("--filter-year", type=int, help="Audit only Final PO rows whose Dispatch Date matches this year")
+    parser.add_argument("--filter-month", type=int, choices=range(1, 13), help="Audit only Final PO rows whose Dispatch Date matches this month")
     parser.add_argument(
         "--expected-ecc",
         action="append",
@@ -454,6 +456,28 @@ def canonical_builder(dataset: CanonicalDataset) -> CanonicalDataset:
         expected_records.append(replace(record, canonical=data))
 
     return CanonicalDataset(final_records, expected_records, dataset.metadata)
+
+
+def filter_final_po_period(dataset: CanonicalDataset, year: Optional[int], month: Optional[int]) -> CanonicalDataset:
+    if year is None and month is None:
+        return dataset
+    if year is None or month is None:
+        raise ValueError("Final PO year and month filters must be provided together.")
+
+    filtered_records = []
+    for record in dataset.final_po_records:
+        parsed = sortable_date(record.canonical.get("dispatch_date"))
+        if isinstance(parsed, datetime) and parsed.year == year and parsed.month == month:
+            filtered_records.append(record)
+
+    metadata = dict(dataset.metadata)
+    metadata["final_po_period_filter"] = {
+        "year": year,
+        "month": month,
+        "input_row_count": len(dataset.final_po_records),
+        "matched_row_count": len(filtered_records),
+    }
+    return CanonicalDataset(filtered_records, dataset.expected_records, metadata)
 
 
 def expected_matcher(dataset: CanonicalDataset) -> List[ExpectedMatch]:
@@ -853,7 +877,7 @@ def run_pipeline(args: argparse.Namespace) -> Dict[str, Any]:
         ecc_sheet=args.ecc_sheet,
     )
     mapped = field_mapper(raw)
-    canonical = canonical_builder(mapped)
+    canonical = filter_final_po_period(canonical_builder(mapped), args.filter_year, args.filter_month)
     matches = expected_matcher(canonical)
     audited = audit_engine(matches, canonical.metadata)
     duplicated = duplicate_resolver(audited)
