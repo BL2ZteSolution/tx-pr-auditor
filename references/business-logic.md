@@ -28,18 +28,24 @@ For each Final PO row:
 
 1. Identify submitted site code, DU, item code, subcontractor, quantity, and ordering fields.
 2. Match site code or DU to generated ECC rows.
-3. If no generated ECC entitlement exists, return Invalid PO.
-4. Validate subcontractor against generated ECC subcontractor.
-5. Check whether submitted item code exists in generated ECC rows for the site.
-6. If site exists but item does not, return Wrong PO.
-7. If item is correct, compare quantity with remaining generated ECC entitlement in deterministic snapshot order.
-8. Return Normal for available quantity and Duplicate PO for excess quantity.
+3. Resolve the create-pr-cd DU identity from explicit ECC metadata or filename.
+4. Restrict matching by the Final PO DU model when Project Name or
+   product-model remarks identify one.
+5. If no generated ECC entitlement exists, return Invalid PO.
+6. If entitlement remains ambiguous across DU models, return Invalid PO.
+7. Validate subcontractor against generated ECC subcontractor.
+8. Check whether submitted item code exists in generated ECC rows for the site.
+9. If site exists but item does not, return Wrong PO.
+10. If item is correct, compare quantity with remaining generated ECC entitlement in deterministic snapshot order.
+11. Return Normal for available quantity and Duplicate PO for excess quantity.
 
 ## Invalid PO
 
 Use `Abnormal - Invalid PO` when:
 
 - No generated ECC entitlement exists for the submitted site or DU.
+- The same site and item resolve to multiple DU models and Final PO does not
+  identify which DU applies.
 - Submitted subcontractor differs from generated ECC subcontractor.
 
 Invalid PO consumes no expected quantity.
@@ -86,6 +92,7 @@ Normal:
 Invalid PO:
 
 - `INVALID_NOT_IN_CREATE_PR_CD_OUTPUT`
+- `INVALID_AMBIGUOUS_DU_MODEL`
 - `INVALID_SUBCON_CHANGED`
 
 Wrong PO:

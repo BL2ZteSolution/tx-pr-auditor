@@ -1,0 +1,94 @@
+{
+  "schema_version": "1.0",
+  "identity_rule": "iEPMS Project + DU Model",
+  "source_contract": "create-pr-cd/config/registries/mw_du_profile_identity_registry.yaml",
+  "identities": [
+    {
+      "identity_key": "Malaysia_CelcomDigi_Project::4188808420049567786",
+      "project_key": "Malaysia_CelcomDigi_Project",
+      "du_model_name": "TX Mini Project",
+      "du_model_id": "4188808420049567786",
+      "aliases": ["TX Mini Project"],
+      "profile_ids": ["tx_mini_pr_v1"],
+      "view_ids": ["2477626672974883536"]
+    },
+    {
+      "identity_key": "Malaysia_CelcomDigi_Project::1027190858144623081",
+      "project_key": "Malaysia_CelcomDigi_Project",
+      "du_model_name": "2023 TX Rollout",
+      "du_model_id": "1027190858144623081",
+      "aliases": ["2023 TX Rollout"],
+      "profile_ids": ["tx_rollout_2023_pr_v1"],
+      "view_ids": ["8530399820526021092"]
+    },
+    {
+      "identity_key": "CelcomDigi_MW::5440935430300168497",
+      "project_key": "CelcomDigi_MW",
+      "du_model_name": "MW EOS Swap",
+      "du_model_id": "5440935430300168497",
+      "aliases": ["MW EOS Swap"],
+      "profile_ids": ["mw_eos_swap_pr_v1"],
+      "view_ids": ["7476572371505372260"]
+    },
+    {
+      "identity_key": "Malaysia_CelcomDigi_Project::8296022438223590261",
+      "project_key": "Malaysia_CelcomDigi_Project",
+      "du_model_name": "2023 Celcomdigi BAU",
+      "du_model_id": "8296022438223590261",
+      "aliases": ["2023 Celcomdigi BAU"],
+      "profile_ids": ["celcomdigi_bau_2023_pr_v1"],
+      "view_ids": ["3882899459299681347"]
+    },
+    {
+      "identity_key": "Malaysia_CelcomDigi_Project::7278317398457076992",
+      "project_key": "Malaysia_CelcomDigi_Project",
+      "du_model_name": "2024 Celcomdigi BAU",
+      "du_model_id": "7278317398457076992",
+      "aliases": ["2024 Celcomdigi BAU"],
+      "profile_ids": ["celcomdigi_bau_2024_pr_v1"],
+      "view_ids": ["1090541706000906451"]
+    },
+    {
+      "identity_key": "Malaysia_CelcomDigi_Project::3765504705612341090",
+      "project_key": "Malaysia_CelcomDigi_Project",
+      "du_model_name": "Celcomdigi USP",
+      "du_model_id": "3765504705612341090",
+      "aliases": ["Celcomdigi USP"],
+      "profile_ids": ["celcomdigi_usp_pr_v1"],
+      "view_ids": ["703232142435130905"]
+    },
+    {
+      "identity_key": "Malaysia_CelcomDigi_Project::4972593269368006257",
+      "project_key": "Malaysia_CelcomDigi_Project",
+      "du_model_name": "Jendela TX Migration",
+      "du_model_id": "4972593269368006257",
+      "aliases": ["Jendela TX Migration"],
+      "profile_ids": ["jendela_tx_migration_pr_v1"],
+      "view_ids": ["4026888666764910245"]
+    },
+    {
+      "identity_key": "CelcomDigi_MW::8638668101234290847",
+      "project_key": "CelcomDigi_MW",
+      "du_model_name": "ZTE TX MINI",
+      "du_model_id": "8638668101234290847",
+      "aliases": ["ZTE TX MINI"],
+      "profile_ids": ["zte_tx_mini_pr_v1"],
+      "view_ids": ["2279585426760368522"]
+    },
+    {
+      "identity_key": "Malaysia_CelcomDigi_Project::8359047522524182050",
+      "project_key": "Malaysia_CelcomDigi_Project",
+      "du_model_name": "CD consolidation 2023",
+      "du_model_id": "8359047522524182050",
+      "aliases": ["CD consolidation 2023"],
+      "profile_ids": [
+        "cd_consolidation_2023_decom_pr_v1",
+        "cd_consolidation_2023_rollout_pr_v1"
+      ],
+      "view_ids": [
+        "702960351133798763",
+        "8359047522524230651"
+      ]
+    }
+  ]
+}

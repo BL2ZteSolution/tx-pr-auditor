@@ -28,6 +28,9 @@ Generated ECC:
 - Header row: row `1`
 - Accept `.xlsx` and `.xlsm` files.
 - Accept a directory containing generated ECC workbooks.
+- Resolve DU identity from `DU Model ID`, `DU Profile ID`, or `DU Model Name`
+  columns when present; otherwise resolve it from the ECC filename.
+- Use `config/du_registry.json` as the local nine-DU identity contract.
 
 ## Final PO Field Map
 
@@ -79,6 +82,20 @@ Map these generated ECC headers into canonical fields:
 | `Unit*` | expected_unit |
 | `Quantity*` | expected_quantity |
 | `Remarks` | remarks |
+| `DU Model` or `DU Model Name` | du_model_name |
+| `DU Model ID` | du_model_id |
+| `DU Profile ID` | du_profile_id |
+
+## Supported DU Identities
+
+The registry contains nine unique Project + DU Model identities. The two
+`CD consolidation 2023` profiles are different views of the same identity and
+must not be counted as separate DUs.
+
+If Final PO identifies a DU model in Project Name or product-model remarks,
+matching is restricted to that DU. If the same submitted site and item match
+multiple identified DU models without a Final PO DU model, the row fails closed
+with `INVALID_AMBIGUOUS_DU_MODEL`.
 
 ## Post-create-pr-cd Validation Role
 

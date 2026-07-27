@@ -20,6 +20,10 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
+SKILL_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_DU_REGISTRY = SKILL_ROOT / "config" / "du_registry.json"
+
+
 FINAL_PO_SHEET_NAME = "条目明细"
 FINAL_PO_FORMATS = (
     ("条目明细", 1),
@@ -92,11 +96,19 @@ ECC_FIELD_MAP = {
     "Unit*": "expected_unit",
     "Quantity*": "expected_quantity",
     "Remarks": "remarks",
+    "DU Model": "du_model_name",
+    "DU Model Name": "du_model_name",
+    "DU Model ID": "du_model_id",
+    "DU Profile ID": "du_profile_id",
 }
 
 AUDIT_HEADERS = [
     "Source Row",
     "Scope",
+    "DU Model",
+    "DU Model ID",
+    "DU Identity Key",
+    "DU Profile ID",
     "Audit Result",
     "Reason Code",
     "Expected Item",
@@ -155,6 +167,10 @@ class CanonicalDataset:
 class ExpectedMatch:
     final_po: FinalPORecord
     scope: str
+    du_model_name: str
+    du_model_id: str
+    du_identity_key: str
+    du_profile_ids: str
     candidate_site_key: str
     expected_items: List[ExpectedECCRecord]
     exact_item_records: List[ExpectedECCRecord]
@@ -166,6 +182,10 @@ class ExpectedMatch:
 class AuditResult:
     final_po: FinalPORecord
     scope: str
+    du_model_name: str
+    du_model_id: str
+    du_identity_key: str
+    du_profile_ids: str
     classification: str
     reason_code: str
     expected_items: List[ExpectedECCRecord]
@@ -208,6 +228,11 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help="Generated ECC .xlsx file or directory. Repeat for multiple paths.",
     )
+    parser.add_argument(
+        "--du-registry",
+        default=str(DEFAULT_DU_REGISTRY),
+        help="Nine-DU identity registry used to classify and isolate ECC entitlement.",
+    )
     parser.add_argument("--ecc-sheet", default=ECC_SHEET_NAME, help="ECC worksheet name")
     parser.add_argument("--output", default="output/PR_Audit_Result.xlsx", help="Audit workbook path")
     parser.add_argument("--summary-json", help="Optional JSON summary path")
@@ -243,6 +268,96 @@ def require_file(path: Path, label: str) -> Path:
     if not path.is_file():
         raise FileNotFoundError(f"{label} is not a file: {path}")
     return path
+
+
+def load_du_registry(path: Path = DEFAULT_DU_REGISTRY) -> Dict[str, Any]:
+    registry_path = require_file(Path(path), "DU registry")
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    identities = registry.get("identities")
+    if not isinstance(identities, list) or not identities:
+        raise ValueError(f"DU registry has no identities: {registry_path}")
+
+    identity_keys: set[str] = set()
+    model_ids: set[str] = set()
+    for identity in identities:
+        if not isinstance(identity, dict):
+            raise ValueError(f"DU registry identity must be an object: {registry_path}")
+        required = ("identity_key", "project_key", "du_model_name", "du_model_id", "aliases", "profile_ids")
+        missing = [field for field in required if not identity.get(field)]
+        if missing:
+            raise ValueError(f"DU registry identity is missing {', '.join(missing)}: {registry_path}")
+        identity_key = text(identity["identity_key"])
+        model_id = text(identity["du_model_id"])
+        if identity_key in identity_keys:
+            raise ValueError(f"Duplicate DU identity key in registry: {identity_key}")
+        if model_id in model_ids:
+            raise ValueError(f"Duplicate DU model ID in registry: {model_id}")
+        identity_keys.add(identity_key)
+        model_ids.add(model_id)
+
+    return {
+        **registry,
+        "path": str(registry_path),
+        "identities": identities,
+    }
+
+
+def normalize_du_phrase(value: Any) -> str:
+    return " ".join(re.findall(r"[A-Z0-9]+", text(value).upper()))
+
+
+def resolve_du_identity(
+    registry: Dict[str, Any],
+    *,
+    du_model_name: Any = "",
+    du_model_id: Any = "",
+    du_profile_id: Any = "",
+    source_text: Any = "",
+) -> Optional[Dict[str, Any]]:
+    identities = registry["identities"]
+    model_id = text(du_model_id)
+    profile_id = text(du_profile_id)
+    if model_id:
+        return next((identity for identity in identities if text(identity["du_model_id"]) == model_id), None)
+    if profile_id:
+        return next(
+            (
+                identity
+                for identity in identities
+                if profile_id in {text(value) for value in identity.get("profile_ids", [])}
+            ),
+            None,
+        )
+
+    haystacks = [normalize_du_phrase(value) for value in (du_model_name, source_text) if text(value)]
+    matches: List[Tuple[int, Dict[str, Any]]] = []
+    for identity in identities:
+        aliases = list(identity.get("aliases", [])) + [identity.get("du_model_name", "")]
+        for alias in aliases:
+            needle = normalize_du_phrase(alias)
+            if needle and any(f" {needle} " in f" {haystack} " for haystack in haystacks):
+                matches.append((len(needle), identity))
+                break
+    if not matches:
+        return None
+    matches.sort(key=lambda item: item[0], reverse=True)
+    top_length = matches[0][0]
+    top = {match[1]["identity_key"]: match[1] for match in matches if match[0] == top_length}
+    return next(iter(top.values())) if len(top) == 1 else None
+
+
+def apply_du_identity(data: Dict[str, Any], identity: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if identity is None:
+        data["du_identity_key"] = ""
+        data["du_model_name"] = text(data.get("du_model_name"))
+        data["du_model_id"] = text(data.get("du_model_id"))
+        data["du_profile_ids"] = text(data.get("du_profile_id"))
+        return data
+    data["du_identity_key"] = text(identity["identity_key"])
+    data["du_model_name"] = text(identity["du_model_name"])
+    data["du_model_id"] = text(identity["du_model_id"])
+    data["du_profile_ids"] = join_unique(identity.get("profile_ids", []))
+    return data
 
 
 def expand_ecc_paths(paths: Sequence[str]) -> List[Path]:
@@ -431,7 +546,11 @@ def field_mapper(raw: RawDataset) -> CanonicalDataset:
     return CanonicalDataset(final_records, expected_records, raw.metadata)
 
 
-def canonical_builder(dataset: CanonicalDataset) -> CanonicalDataset:
+def canonical_builder(
+    dataset: CanonicalDataset,
+    du_registry: Optional[Dict[str, Any]] = None,
+) -> CanonicalDataset:
+    du_registry = du_registry or load_du_registry()
     final_records: List[FinalPORecord] = []
     for record in dataset.final_po_records:
         data = dict(record.canonical)
@@ -441,6 +560,15 @@ def canonical_builder(dataset: CanonicalDataset) -> CanonicalDataset:
         data["submitted_quantity"] = submitted_quantity(data)
         data["submitted_subcontractor_norm"] = normalize_subcontractor(data.get("submitted_subcontractor"))
         data["dispatch_sort_key"] = dispatch_sort_key(data)
+        final_identity = resolve_du_identity(
+            du_registry,
+            source_text=" ".join(
+                text(data.get(field))
+                for field in ("project_name", "product_model_remark")
+                if text(data.get(field))
+            ),
+        )
+        apply_du_identity(data, final_identity)
         final_records.append(replace(record, canonical=data))
 
     expected_records: List[ExpectedECCRecord] = []
@@ -452,10 +580,37 @@ def canonical_builder(dataset: CanonicalDataset) -> CanonicalDataset:
         data["expected_quantity"] = to_float(data.get("expected_quantity"), default=0.0)
         data["expected_subcontractor_norm"] = normalize_subcontractor(data.get("expected_subcontractor"))
         data["scope"] = infer_scope_from_ecc(record.source_file)
+        expected_identity = resolve_du_identity(
+            du_registry,
+            du_model_name=data.get("du_model_name"),
+            du_model_id=data.get("du_model_id"),
+            du_profile_id=data.get("du_profile_id"),
+            source_text=Path(record.source_file).name,
+        )
+        apply_du_identity(data, expected_identity)
         data["entitlement_key"] = entitlement_key(data)
         expected_records.append(replace(record, canonical=data))
 
-    return CanonicalDataset(final_records, expected_records, dataset.metadata)
+    metadata = dict(dataset.metadata)
+    file_identities: Dict[str, Dict[str, str]] = {}
+    for record in expected_records:
+        file_name = str(Path(record.source_file))
+        if file_name not in file_identities:
+            file_identities[file_name] = {
+                "du_model_name": text(record.canonical.get("du_model_name")) or "UNKNOWN",
+                "du_model_id": text(record.canonical.get("du_model_id")),
+                "du_identity_key": text(record.canonical.get("du_identity_key")),
+                "du_profile_ids": text(record.canonical.get("du_profile_ids")),
+            }
+    identified_files = sum(bool(item["du_identity_key"]) for item in file_identities.values())
+    metadata["du_support"] = {
+        "registry_path": du_registry["path"],
+        "supported_du_count": len(du_registry["identities"]),
+        "identified_ecc_file_count": identified_files,
+        "unknown_ecc_file_count": len(file_identities) - identified_files,
+        "ecc_files": file_identities,
+    }
+    return CanonicalDataset(final_records, expected_records, metadata)
 
 
 def filter_final_po_period(dataset: CanonicalDataset, year: Optional[int], month: Optional[int]) -> CanonicalDataset:
@@ -492,19 +647,52 @@ def expected_matcher(dataset: CanonicalDataset) -> List[ExpectedMatch]:
         candidate_keys = [key for key in [f.get("site_code"), f.get("du")] if key]
         expected_items = []
         site_key = ""
+        final_du_identity = text(f.get("du_identity_key"))
         for key in candidate_keys:
-            if expected_by_site.get(key):
-                expected_items = expected_by_site[key]
+            candidates = expected_by_site.get(key, [])
+            if final_du_identity:
+                candidates = [
+                    item
+                    for item in candidates
+                    if text(item.canonical.get("du_identity_key")) == final_du_identity
+                ]
+            if candidates:
+                expected_items = candidates
                 site_key = key
                 break
         submitted_code = f.get("submitted_item_code")
         exact = [item for item in expected_items if item.canonical.get("expected_item_code") == submitted_code]
         scope = infer_scope_from_expected_or_final(exact or expected_items, final_po)
+        identity_records = exact or expected_items
+        identity_keys = {
+            text(item.canonical.get("du_identity_key")) or "UNKNOWN"
+            for item in identity_records
+        }
+        if len(identity_keys) > 1:
+            du_identity_key = "MULTI"
+            du_model_name = "MULTI"
+            du_model_id = "MULTI"
+        elif identity_records:
+            du_identity_key = next(iter(identity_keys))
+            du_model_name = join_unique(item.canonical.get("du_model_name") for item in identity_records) or "UNKNOWN"
+            du_model_id = join_unique(item.canonical.get("du_model_id") for item in identity_records)
+        else:
+            du_identity_key = final_du_identity
+            du_model_name = text(f.get("du_model_name"))
+            du_model_id = text(f.get("du_model_id"))
+        du_profile_ids = join_unique(
+            item.canonical.get("du_profile_ids")
+            for item in identity_records
+        )
         subcon = sorted({text(item.canonical.get("expected_subcontractor")) for item in expected_items if text(item.canonical.get("expected_subcontractor"))})
         matches.append(
             ExpectedMatch(
                 final_po=final_po,
                 scope=scope,
+                du_model_name=du_model_name,
+                du_model_id=du_model_id,
+                du_identity_key=du_identity_key,
+                du_profile_ids=du_profile_ids,
                 candidate_site_key=site_key,
                 expected_items=expected_items,
                 exact_item_records=exact,
@@ -540,6 +728,19 @@ def audit_engine(matches: Sequence[ExpectedMatch], metadata: Dict[str, Any]) -> 
                     "Abnormal - Invalid PO",
                     "INVALID_NOT_IN_CREATE_PR_CD_OUTPUT",
                     "No generated ECC entitlement exists for the submitted site or DU.",
+                    expected_subcontractor,
+                    consumes=False,
+                )
+            )
+            continue
+
+        if match.du_identity_key == "MULTI":
+            results.append(
+                make_result(
+                    match,
+                    "Abnormal - Invalid PO",
+                    "INVALID_AMBIGUOUS_DU_MODEL",
+                    "The submitted site and item match entitlement from multiple DU models; identify the DU model in Final PO.",
                     expected_subcontractor,
                     consumes=False,
                 )
@@ -605,7 +806,7 @@ def duplicate_resolver(dataset: AuditDataset) -> AuditDataset:
     pending = [idx for idx, result in enumerate(results) if result.consumes_quantity]
     pending.sort(key=lambda idx: results[idx].final_po.canonical.get("dispatch_sort_key"))
 
-    consumed: Dict[Tuple[str, str, str, str], float] = defaultdict(float)
+    consumed: Dict[Tuple[str, str, str, str, str], float] = defaultdict(float)
     for idx in pending:
         result = results[idx]
         f = result.final_po.canonical
@@ -669,6 +870,10 @@ def report_writer(dataset: AuditDataset, output: Path, summary_json: Optional[Pa
         audit_values = [
             result.final_po.source_row,
             result.scope,
+            result.du_model_name,
+            result.du_model_id,
+            result.du_identity_key,
+            result.du_profile_ids,
             result.classification,
             result.reason_code,
             expected_item_text(result.expected_items),
@@ -692,6 +897,7 @@ def report_writer(dataset: AuditDataset, output: Path, summary_json: Optional[Pa
         "total_rows": len(dataset.results),
         "classifications": dict(Counter(result.classification for result in dataset.results)),
         "reason_codes": dict(Counter(result.reason_code for result in dataset.results)),
+        "du_models": dict(Counter(result.du_model_name or "UNKNOWN" for result in dataset.results)),
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "metadata": dataset.metadata,
     }
@@ -758,11 +964,20 @@ def annotated_ecc_writer(
         output_file = output_dir / output_name
         wb.save(output_file)
         wb.close()
+        du_file_metadata = (
+            dataset.metadata.get("du_support", {})
+            .get("ecc_files", {})
+            .get(str(source_file), {})
+        )
         file_summaries.append(
             {
                 "source_file": str(source_file),
                 "output_file": str(output_file),
                 "worksheet": ecc_sheet,
+                "du_model_name": du_file_metadata.get("du_model_name", "UNKNOWN"),
+                "du_model_id": du_file_metadata.get("du_model_id", ""),
+                "du_identity_key": du_file_metadata.get("du_identity_key", ""),
+                "du_profile_ids": du_file_metadata.get("du_profile_ids", ""),
                 "annotated_rows": annotated_rows,
                 "status_counts": dict(file_status_counts),
             }
@@ -868,6 +1083,7 @@ def split_joined(value: Any) -> List[str]:
 def run_pipeline(args: argparse.Namespace) -> Dict[str, Any]:
     final_po = require_file(Path(args.final_po), "Final PO")
     ecc_files = expand_ecc_paths(args.expected_ecc)
+    du_registry = load_du_registry(Path(args.du_registry))
     raw = workbook_reader(
         final_po=final_po,
         expected_ecc_files=ecc_files,
@@ -877,7 +1093,11 @@ def run_pipeline(args: argparse.Namespace) -> Dict[str, Any]:
         ecc_sheet=args.ecc_sheet,
     )
     mapped = field_mapper(raw)
-    canonical = filter_final_po_period(canonical_builder(mapped), args.filter_year, args.filter_month)
+    canonical = filter_final_po_period(
+        canonical_builder(mapped, du_registry),
+        args.filter_year,
+        args.filter_month,
+    )
     matches = expected_matcher(canonical)
     audited = audit_engine(matches, canonical.metadata)
     duplicated = duplicate_resolver(audited)
@@ -916,6 +1136,10 @@ def make_result(
     return AuditResult(
         final_po=match.final_po,
         scope=match.scope,
+        du_model_name=match.du_model_name,
+        du_model_id=match.du_model_id,
+        du_identity_key=match.du_identity_key,
+        du_profile_ids=match.du_profile_ids,
         classification=classification,
         reason_code=reason_code,
         expected_items=match.expected_items,
@@ -934,21 +1158,23 @@ def site_keys(data: Dict[str, Any]) -> List[str]:
     return [key for key in [data.get("site_code"), data.get("du")] if key]
 
 
-def entitlement_key(data: Dict[str, Any]) -> Tuple[str, str, str, str]:
+def entitlement_key(data: Dict[str, Any]) -> Tuple[str, str, str, str, str]:
     site_key = data.get("site_code") or data.get("du") or ""
     return (
         site_key,
+        data.get("du_identity_key") or "UNKNOWN",
         data.get("scope") or "UNKNOWN",
         data.get("expected_item_code") or "",
         data.get("expected_subcontractor_norm") or "",
     )
 
 
-def consumption_key(result: AuditResult) -> Tuple[str, str, str, str]:
+def consumption_key(result: AuditResult) -> Tuple[str, str, str, str, str]:
     f = result.final_po.canonical
     site_key = f.get("site_code") or f.get("du") or ""
     return (
         site_key,
+        result.du_identity_key or "UNKNOWN",
         result.scope,
         f.get("submitted_item_code") or "",
         normalize_subcontractor(result.expected_subcontractor),

@@ -72,6 +72,10 @@ python scripts/audit_final_po.py \
 
 Use repeated `--expected-ecc` arguments for multiple files or directories.
 
+The default `config/du_registry.json` recognizes all nine unique create-pr-cd
+DU identities. Use `--du-registry <path>` only to supply an explicitly managed
+replacement registry.
+
 Use `--filter-year <YYYY> --filter-month <1-12>` together to audit only Final PO rows whose Dispatch Date falls in that period.
 
 Use `--final-po-sheet` and `--final-po-header-row` only to override format auto-detection.
@@ -99,6 +103,7 @@ Use generated ECC rows as expected entitlement. Compare Final PO rows by:
 
 - Site ID / physical site code
 - DU / logical site code when available
+- Registered create-pr-cd DU model when available in Final PO or ECC metadata
 - PBOM/item code
 - Subcontractor
 - Quantity
@@ -113,6 +118,8 @@ Decision priority:
 Invalid examples:
 
 - No generated ECC entitlement exists for the submitted site or DU.
+- The same site/item entitlement exists in multiple DU models and Final PO
+  does not identify the intended DU model.
 - Submitted subcontractor differs from generated ECC subcontractor.
 
 Wrong examples:
@@ -142,6 +149,10 @@ Generate `PR_Audit_Result.xlsx` with the original Final PO columns plus audit co
 
 - Source Row
 - Scope
+- DU Model
+- DU Model ID
+- DU Identity Key
+- DU Profile ID
 - Audit Result
 - Reason Code
 - Expected Item
