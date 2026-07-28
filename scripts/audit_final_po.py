@@ -175,6 +175,7 @@ class ExpectedMatch:
     expected_du_resolution_status: str
     candidate_site_key: str
     expected_items: List[ExpectedECCRecord]
+    exact_item_candidates: List[ExpectedECCRecord]
     exact_item_records: List[ExpectedECCRecord]
     expected_subcontractors: List[str]
     evidence: str
@@ -696,6 +697,7 @@ def expected_matcher(dataset: CanonicalDataset) -> List[ExpectedMatch]:
         expected_items = []
         site_key = ""
         final_du_identity = text(f.get("du_identity_key"))
+        final_scope = infer_scope_from_final_po(final_po)
         for key in candidate_keys:
             candidates = expected_by_site.get(key, [])
             if final_du_identity:
@@ -704,14 +706,31 @@ def expected_matcher(dataset: CanonicalDataset) -> List[ExpectedMatch]:
                     for item in candidates
                     if text(item.canonical.get("du_identity_key")) == final_du_identity
                 ]
+            if final_scope != "UNKNOWN":
+                candidates = [
+                    item
+                    for item in candidates
+                    if text(item.canonical.get("scope")) == final_scope
+                ]
             if candidates:
                 expected_items = candidates
                 site_key = key
                 break
         submitted_code = f.get("submitted_item_code")
-        exact = [item for item in expected_items if item.canonical.get("expected_item_code") == submitted_code]
-        scope = infer_scope_from_expected_or_final(exact or expected_items, final_po)
-        identity_records = exact or expected_items
+        exact_candidates = [
+            item
+            for item in expected_items
+            if item.canonical.get("expected_item_code") == submitted_code
+        ]
+        submitted_subcon = text(f.get("submitted_subcontractor_norm"))
+        exact = [
+            item
+            for item in exact_candidates
+            if not submitted_subcon
+            or text(item.canonical.get("expected_subcontractor_norm")) == submitted_subcon
+        ]
+        scope = infer_scope_from_expected_or_final(exact_candidates or expected_items, final_po)
+        identity_records = exact_candidates or expected_items
         identity_keys = {
             text(item.canonical.get("du_identity_key")) or "UNKNOWN"
             for item in identity_records
@@ -745,6 +764,7 @@ def expected_matcher(dataset: CanonicalDataset) -> List[ExpectedMatch]:
                 expected_du_resolution_status=expected_du_resolution_status(identity_records),
                 candidate_site_key=site_key,
                 expected_items=expected_items,
+                exact_item_candidates=exact_candidates,
                 exact_item_records=exact,
                 expected_subcontractors=subcon,
                 evidence=expected_evidence(expected_items),
@@ -761,7 +781,7 @@ def audit_engine(matches: Sequence[ExpectedMatch], metadata: Dict[str, Any]) -> 
         submitted_subcon = f.get("submitted_subcontractor_norm")
         exact_subcons = {
             item.canonical.get("expected_subcontractor_norm")
-            for item in match.exact_item_records
+            for item in match.exact_item_candidates
             if item.canonical.get("expected_subcontractor_norm")
         }
         site_subcons = {
@@ -769,7 +789,10 @@ def audit_engine(matches: Sequence[ExpectedMatch], metadata: Dict[str, Any]) -> 
             for item in match.expected_items
             if item.canonical.get("expected_subcontractor_norm")
         }
-        expected_subcontractor = "; ".join(match.expected_subcontractors)
+        expected_subcontractor = join_unique(
+            item.canonical.get("expected_subcontractor")
+            for item in match.exact_item_records
+        ) or "; ".join(match.expected_subcontractors)
 
         if not match.expected_items:
             results.append(
@@ -826,6 +849,19 @@ def audit_engine(matches: Sequence[ExpectedMatch], metadata: Dict[str, Any]) -> 
             )
             continue
 
+        if match.scope == "MULTI":
+            results.append(
+                make_result(
+                    match,
+                    "Abnormal - Invalid PO",
+                    "INVALID_AMBIGUOUS_SCOPE",
+                    "The submitted site and item match entitlement from multiple scopes; identify the scope in Final PO.",
+                    expected_subcontractor,
+                    consumes=False,
+                )
+            )
+            continue
+
         if submitted_subcon and site_subcons and submitted_subcon not in site_subcons:
             results.append(
                 make_result(
@@ -839,7 +875,7 @@ def audit_engine(matches: Sequence[ExpectedMatch], metadata: Dict[str, Any]) -> 
             )
             continue
 
-        if not match.exact_item_records:
+        if not match.exact_item_candidates:
             results.append(
                 make_result(
                     match,
@@ -859,6 +895,19 @@ def audit_engine(matches: Sequence[ExpectedMatch], metadata: Dict[str, Any]) -> 
                     "Abnormal - Invalid PO",
                     "INVALID_SUBCON_CHANGED",
                     "Submitted subcontractor does not match the generated ECC subcontractor for this item.",
+                    expected_subcontractor,
+                    consumes=False,
+                )
+            )
+            continue
+
+        if not submitted_subcon and len(exact_subcons) > 1:
+            results.append(
+                make_result(
+                    match,
+                    "Abnormal - Invalid PO",
+                    "INVALID_AMBIGUOUS_SUBCONTRACTOR",
+                    "The submitted item has entitlement from multiple subcontractors; identify the subcontractor in Final PO.",
                     expected_subcontractor,
                     consumes=False,
                 )

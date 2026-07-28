@@ -211,7 +211,11 @@ class TxPrAuditorTests(unittest.TestCase):
         dataset = audit.canonical_builder(
             audit.CanonicalDataset(
                 [final_record(project_name="")],
-                [expected_record(source_file="unregistered-output.xlsx")],
+                [
+                    expected_record(
+                        source_file="Northern-GCI Unregistered Model Planning PR 20260727.xlsx"
+                    )
+                ],
                 {},
             ),
             registry,
@@ -283,6 +287,101 @@ class TxPrAuditorTests(unittest.TestCase):
             {result.du_model_name for result in results},
             {"MW EOS Swap", "ZTE TX MINI"},
         )
+
+    def test_expected_quantity_is_isolated_by_scope(self):
+        registry = audit.load_du_registry()
+        dataset = audit.canonical_builder(
+            audit.CanonicalDataset(
+                [
+                    final_record(
+                        business_domain="Survey",
+                        submitted_item_description="TSS survey",
+                        submitted_quantity=2.0,
+                    )
+                ],
+                [
+                    expected_record(
+                        source_file="Northern-GCI TX Mini Project TSS PR 20260727.xlsx",
+                        expected_quantity=1.0,
+                    ),
+                    expected_record(
+                        source_row=3,
+                        source_file="Northern-GCI TX Mini Project TI PR 20260727.xlsx",
+                        expected_quantity=5.0,
+                    ),
+                ],
+                {},
+            ),
+            registry,
+        )
+
+        result = run_pipeline_for_records(
+            dataset.final_po_records,
+            dataset.expected_records,
+        )[0]
+
+        self.assertEqual(result.scope, "TSS")
+        self.assertEqual(result.expected_quantity, 1.0)
+        self.assertEqual(result.reason_code, "DUPLICATE_PARTIAL_QUANTITY")
+
+    def test_unknown_final_scope_does_not_pool_multiple_scopes(self):
+        registry = audit.load_du_registry()
+        dataset = audit.canonical_builder(
+            audit.CanonicalDataset(
+                [
+                    final_record(
+                        business_domain="",
+                        submitted_item_description="Unclassified service",
+                    )
+                ],
+                [
+                    expected_record(
+                        source_file="Northern-GCI TX Mini Project TSS PR 20260727.xlsx",
+                    ),
+                    expected_record(
+                        source_row=3,
+                        source_file="Northern-GCI TX Mini Project TI PR 20260727.xlsx",
+                    ),
+                ],
+                {},
+            ),
+            registry,
+        )
+
+        result = run_pipeline_for_records(
+            dataset.final_po_records,
+            dataset.expected_records,
+        )[0]
+
+        self.assertEqual(result.classification, "Abnormal - Invalid PO")
+        self.assertEqual(result.reason_code, "INVALID_AMBIGUOUS_SCOPE")
+
+    def test_expected_quantity_is_isolated_by_subcontractor(self):
+        registry = audit.load_du_registry()
+        dataset = audit.canonical_builder(
+            audit.CanonicalDataset(
+                [final_record(submitted_subcontractor="GCI", submitted_quantity=2.0)],
+                [
+                    expected_record(expected_subcontractor="GCI", expected_quantity=1.0),
+                    expected_record(
+                        source_row=3,
+                        expected_subcontractor="OTHER",
+                        expected_quantity=5.0,
+                    ),
+                ],
+                {},
+            ),
+            registry,
+        )
+
+        result = run_pipeline_for_records(
+            dataset.final_po_records,
+            dataset.expected_records,
+        )[0]
+
+        self.assertEqual(result.expected_quantity, 1.0)
+        self.assertEqual(result.expected_subcontractor, "GCI")
+        self.assertEqual(result.reason_code, "DUPLICATE_PARTIAL_QUANTITY")
 
     def test_filter_final_po_period_keeps_only_matching_dispatch_month(self):
         january = final_record(source_row=2, dispatch_date=datetime(2026, 1, 3))
