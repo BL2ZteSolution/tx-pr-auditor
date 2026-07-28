@@ -85,6 +85,7 @@ Map these generated ECC headers into canonical fields:
 | `DU Model` or `DU Model Name` | du_model_name |
 | `DU Model ID` | du_model_id |
 | `DU Profile ID` | du_profile_id |
+| `DU View ID` or `View ID` | du_view_id |
 | `DU Project Key` | du_project_key |
 
 ## Supported DU Identities
@@ -92,6 +93,11 @@ Map these generated ECC headers into canonical fields:
 The registry contains nine unique Project + DU Model identities. The two
 `CD consolidation 2023` profiles are different views of the same identity and
 must not be counted as separate DUs.
+
+The local registry preserves each profile's lifecycle status and accepted View
+IDs. When the sibling `create-pr-cd` source contract is available, registry
+loading compares the complete identity/profile/view mapping and fails if the
+local snapshot has drifted.
 
 If Final PO identifies a DU model in Project Name, product-model remarks, or
 logical-site name, matching is restricted to that DU. Project Code is resolved

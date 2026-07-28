@@ -154,6 +154,8 @@ Generate `PR_Audit_Result.xlsx` with the original Final PO columns plus audit co
 - DU Model ID
 - DU Identity Key
 - DU Profile ID
+- DU Profile Status
+- DU View ID
 - Audit Result
 - Reason Code
 - Expected Item

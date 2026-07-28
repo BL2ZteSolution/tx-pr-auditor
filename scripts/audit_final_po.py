@@ -100,6 +100,8 @@ ECC_FIELD_MAP = {
     "DU Model Name": "du_model_name",
     "DU Model ID": "du_model_id",
     "DU Profile ID": "du_profile_id",
+    "DU View ID": "du_view_id",
+    "View ID": "du_view_id",
     "DU Project Key": "du_project_key",
 }
 
@@ -110,6 +112,8 @@ AUDIT_HEADERS = [
     "DU Model ID",
     "DU Identity Key",
     "DU Profile ID",
+    "DU Profile Status",
+    "DU View ID",
     "Audit Result",
     "Reason Code",
     "Expected Item",
@@ -172,6 +176,8 @@ class ExpectedMatch:
     du_model_id: str
     du_identity_key: str
     du_profile_ids: str
+    du_profile_statuses: str
+    du_view_ids: str
     final_du_resolution_status: str
     expected_du_resolution_status: str
     candidate_site_key: str
@@ -190,6 +196,8 @@ class AuditResult:
     du_model_id: str
     du_identity_key: str
     du_profile_ids: str
+    du_profile_statuses: str
+    du_view_ids: str
     classification: str
     reason_code: str
     expected_items: List[ExpectedECCRecord]
@@ -283,10 +291,21 @@ def load_du_registry(path: Path = DEFAULT_DU_REGISTRY) -> Dict[str, Any]:
 
     identity_keys: set[str] = set()
     model_ids: set[str] = set()
+    profile_ids: set[str] = set()
+    view_ids: set[str] = set()
     for identity in identities:
         if not isinstance(identity, dict):
             raise ValueError(f"DU registry identity must be an object: {registry_path}")
-        required = ("identity_key", "project_key", "du_model_name", "du_model_id", "aliases", "profile_ids")
+        required = (
+            "identity_key",
+            "project_key",
+            "du_model_name",
+            "du_model_id",
+            "aliases",
+            "profile_ids",
+            "view_ids",
+            "profiles",
+        )
         missing = [field for field in required if not identity.get(field)]
         if missing:
             raise ValueError(f"DU registry identity is missing {', '.join(missing)}: {registry_path}")
@@ -298,12 +317,108 @@ def load_du_registry(path: Path = DEFAULT_DU_REGISTRY) -> Dict[str, Any]:
             raise ValueError(f"Duplicate DU model ID in registry: {model_id}")
         identity_keys.add(identity_key)
         model_ids.add(model_id)
+        profiles = identity["profiles"]
+        if not isinstance(profiles, list) or not profiles:
+            raise ValueError(f"DU registry identity has no profile traceability: {identity_key}")
+        traced_profile_ids: set[str] = set()
+        traced_view_ids: set[str] = set()
+        for profile in profiles:
+            if not isinstance(profile, dict):
+                raise ValueError(f"DU registry profile trace must be an object: {identity_key}")
+            profile_id = text(profile.get("profile_id"))
+            profile_status = text(profile.get("profile_status"))
+            profile_view_ids = {text(value) for value in profile.get("view_ids", []) if text(value)}
+            if not profile_id or not profile_status or not profile_view_ids:
+                raise ValueError(f"Incomplete DU profile traceability: {identity_key}")
+            if profile_id in profile_ids:
+                raise ValueError(f"Duplicate DU profile ID in registry: {profile_id}")
+            if view_ids.intersection(profile_view_ids):
+                duplicate_view = sorted(view_ids.intersection(profile_view_ids))[0]
+                raise ValueError(f"Duplicate DU view ID in registry: {duplicate_view}")
+            profile_ids.add(profile_id)
+            view_ids.update(profile_view_ids)
+            traced_profile_ids.add(profile_id)
+            traced_view_ids.update(profile_view_ids)
+        if traced_profile_ids != {text(value) for value in identity["profile_ids"]}:
+            raise ValueError(f"DU profile ID traceability mismatch: {identity_key}")
+        if traced_view_ids != {text(value) for value in identity["view_ids"]}:
+            raise ValueError(f"DU view ID traceability mismatch: {identity_key}")
+
+    source_contract = text(registry.get("source_contract"))
+    source_contract_path = (
+        Path(source_contract)
+        if Path(source_contract).is_absolute()
+        else SKILL_ROOT.parent / source_contract
+    )
+    source_contract_status = "NOT_AVAILABLE"
+    if source_contract and source_contract_path.is_file():
+        upstream = json.loads(source_contract_path.read_text(encoding="utf-8"))
+        validate_du_registry_parity(identities, upstream, source_contract_path)
+        source_contract_status = "MATCHED"
 
     return {
         **registry,
         "path": str(registry_path),
         "identities": identities,
+        "source_contract_path": str(source_contract_path),
+        "source_contract_status": source_contract_status,
     }
+
+
+def validate_du_registry_parity(
+    local_identities: Sequence[Dict[str, Any]],
+    upstream: Dict[str, Any],
+    upstream_path: Path,
+) -> None:
+    upstream_profiles = upstream.get("profiles")
+    if not isinstance(upstream_profiles, list) or not upstream_profiles:
+        raise ValueError(f"Upstream DU identity registry has no profiles: {upstream_path}")
+
+    grouped: Dict[str, Dict[str, Any]] = {}
+    for profile in upstream_profiles:
+        identity_key = text(profile.get("identity_key"))
+        entry = grouped.setdefault(
+            identity_key,
+            {
+                "identity_key": identity_key,
+                "project_key": text(profile.get("project_key")),
+                "du_model_name": text(profile.get("du_model_name")),
+                "du_model_id": text(profile.get("du_model_id")),
+                "profiles": [],
+            },
+        )
+        entry["profiles"].append(
+            {
+                "profile_id": text(profile.get("profile_id")),
+                "profile_status": text(profile.get("profile_status")),
+                "view_ids": sorted(text(value) for value in profile.get("accepted_view_ids", [])),
+            }
+        )
+
+    def normalized(entries: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        return {
+            text(entry["identity_key"]): {
+                "identity_key": text(entry["identity_key"]),
+                "project_key": text(entry["project_key"]),
+                "du_model_name": text(entry["du_model_name"]),
+                "du_model_id": text(entry["du_model_id"]),
+                "profiles": sorted(
+                    (
+                        {
+                            "profile_id": text(profile["profile_id"]),
+                            "profile_status": text(profile["profile_status"]),
+                            "view_ids": sorted(text(value) for value in profile.get("view_ids", [])),
+                        }
+                        for profile in entry["profiles"]
+                    ),
+                    key=lambda item: item["profile_id"],
+                ),
+            }
+            for entry in entries
+        }
+
+    if normalized(local_identities) != normalized(list(grouped.values())):
+        raise ValueError(f"DU registry differs from create-pr-cd source contract: {upstream_path}")
 
 
 def normalize_du_phrase(value: Any) -> str:
@@ -316,6 +431,7 @@ def resolve_du_identity(
     du_model_name: Any = "",
     du_model_id: Any = "",
     du_profile_id: Any = "",
+    du_view_id: Any = "",
     source_text: Any = "",
 ) -> Optional[Dict[str, Any]]:
     identity, status = resolve_du_identity_evidence(
@@ -323,6 +439,7 @@ def resolve_du_identity(
         du_model_name=du_model_name,
         du_model_id=du_model_id,
         du_profile_id=du_profile_id,
+        du_view_id=du_view_id,
         source_text=source_text,
     )
     return identity if status == "RESOLVED" else None
@@ -334,6 +451,7 @@ def resolve_du_identity_evidence(
     du_model_name: Any = "",
     du_model_id: Any = "",
     du_profile_id: Any = "",
+    du_view_id: Any = "",
     project_key: Any = "",
     source_text: Any = "",
 ) -> Tuple[Optional[Dict[str, Any]], str]:
@@ -367,6 +485,21 @@ def resolve_du_identity_evidence(
         else:
             matches[text(identity["identity_key"])] = identity
 
+    view_id = text(du_view_id)
+    if view_id:
+        identity = next(
+            (
+                item
+                for item in identities
+                if view_id in {text(value) for value in item.get("view_ids", [])}
+            ),
+            None,
+        )
+        if identity is None:
+            unknown_explicit_evidence = True
+        else:
+            matches[text(identity["identity_key"])] = identity
+
     for value, explicit in ((du_model_name, True), (source_text, False)):
         value_text = text(value)
         if not value_text:
@@ -390,6 +523,19 @@ def resolve_du_identity_evidence(
     if not matches:
         return None, "UNKNOWN"
     identity = next(iter(matches.values()))
+    if profile_id and view_id:
+        profile_trace = next(
+            (
+                profile
+                for profile in identity.get("profiles", [])
+                if text(profile.get("profile_id")) == profile_id
+            ),
+            None,
+        )
+        if profile_trace is None or view_id not in {
+            text(value) for value in profile_trace.get("view_ids", [])
+        }:
+            return None, "CONFLICT"
     expected_project_key = text(project_key)
     if expected_project_key and text(identity.get("project_key")) != expected_project_key:
         return None, "CONFLICT"
@@ -444,12 +590,40 @@ def apply_du_identity(
         data["du_model_name"] = text(data.get("du_model_name"))
         data["du_model_id"] = text(data.get("du_model_id"))
         data["du_profile_ids"] = text(data.get("du_profile_id"))
+        data["du_profile_statuses"] = ""
+        data["du_view_ids"] = text(data.get("du_view_id"))
         data["du_project_key"] = text(data.get("du_project_key"))
         return data
     data["du_identity_key"] = text(identity["identity_key"])
     data["du_model_name"] = text(identity["du_model_name"])
     data["du_model_id"] = text(identity["du_model_id"])
-    data["du_profile_ids"] = join_unique(identity.get("profile_ids", []))
+    explicit_profile_id = text(data.get("du_profile_id"))
+    explicit_view_id = text(data.get("du_view_id"))
+    profiles = list(identity.get("profiles", []))
+    selected_profiles = [
+        profile
+        for profile in profiles
+        if (not explicit_profile_id or text(profile.get("profile_id")) == explicit_profile_id)
+        and (
+            not explicit_view_id
+            or explicit_view_id in {text(value) for value in profile.get("view_ids", [])}
+        )
+    ]
+    data["du_profile_ids"] = join_unique(
+        profile.get("profile_id") for profile in selected_profiles
+    )
+    data["du_profile_statuses"] = join_unique(
+        profile.get("profile_status") for profile in selected_profiles
+    )
+    data["du_view_ids"] = join_unique(
+        [explicit_view_id]
+        if explicit_view_id
+        else (
+            value
+            for profile in selected_profiles
+            for value in profile.get("view_ids", [])
+        )
+    )
     data["du_project_key"] = text(identity.get("project_key"))
     return data
 
@@ -691,6 +865,7 @@ def canonical_builder(
             du_model_name=data.get("du_model_name"),
             du_model_id=data.get("du_model_id"),
             du_profile_id=data.get("du_profile_id"),
+            du_view_id=data.get("du_view_id"),
             project_key=expected_project_key,
             source_text=Path(record.source_file).name,
         )
@@ -703,19 +878,41 @@ def canonical_builder(
         expected_records.append(replace(record, canonical=data))
 
     metadata = dict(dataset.metadata)
-    file_identities: Dict[str, Dict[str, str]] = {}
+    file_records: Dict[str, List[ExpectedECCRecord]] = defaultdict(list)
     for record in expected_records:
-        file_name = str(Path(record.source_file))
-        if file_name not in file_identities:
-            file_identities[file_name] = {
-                "du_model_name": text(record.canonical.get("du_model_name")) or "UNKNOWN",
-                "du_model_id": text(record.canonical.get("du_model_id")),
-                "du_identity_key": text(record.canonical.get("du_identity_key")),
-                "du_profile_ids": text(record.canonical.get("du_profile_ids")),
-            }
-    identified_files = sum(bool(item["du_identity_key"]) for item in file_identities.values())
+        file_records[str(Path(record.source_file))].append(record)
+    file_identities: Dict[str, Dict[str, str]] = {}
+    for file_name, records in file_records.items():
+        file_identities[file_name] = {
+            "du_model_name": join_unique(
+                record.canonical.get("du_model_name") for record in records
+            ) or "UNKNOWN",
+            "du_model_id": join_unique(
+                record.canonical.get("du_model_id") for record in records
+            ),
+            "du_identity_key": join_unique(
+                record.canonical.get("du_identity_key") for record in records
+            ),
+            "du_profile_ids": join_unique(
+                record.canonical.get("du_profile_ids") for record in records
+            ),
+            "du_profile_statuses": join_unique(
+                record.canonical.get("du_profile_statuses") for record in records
+            ),
+            "du_view_ids": join_unique(
+                record.canonical.get("du_view_ids") for record in records
+            ),
+            "resolution_status": expected_du_resolution_status(records),
+        }
+    identified_files = sum(
+        item["resolution_status"] == "RESOLVED"
+        and len(split_joined(item["du_identity_key"])) == 1
+        for item in file_identities.values()
+    )
     metadata["du_support"] = {
         "registry_path": du_registry["path"],
+        "source_contract_path": du_registry["source_contract_path"],
+        "source_contract_status": du_registry["source_contract_status"],
         "supported_du_count": len(du_registry["identities"]),
         "identified_ecc_file_count": identified_files,
         "unknown_ecc_file_count": len(file_identities) - identified_files,
@@ -766,7 +963,10 @@ def expected_matcher(dataset: CanonicalDataset) -> List[ExpectedMatch]:
                 candidates = [
                     item
                     for item in candidates
-                    if text(item.canonical.get("du_identity_key")) == final_du_identity
+                    if (
+                        text(item.canonical.get("du_resolution_status")) != "RESOLVED"
+                        or text(item.canonical.get("du_identity_key")) == final_du_identity
+                    )
                 ]
             if final_scope != "UNKNOWN":
                 candidates = [
@@ -813,6 +1013,14 @@ def expected_matcher(dataset: CanonicalDataset) -> List[ExpectedMatch]:
             item.canonical.get("du_profile_ids")
             for item in identity_records
         )
+        du_profile_statuses = join_unique(
+            item.canonical.get("du_profile_statuses")
+            for item in identity_records
+        )
+        du_view_ids = join_unique(
+            item.canonical.get("du_view_ids")
+            for item in identity_records
+        )
         subcon = sorted({text(item.canonical.get("expected_subcontractor")) for item in expected_items if text(item.canonical.get("expected_subcontractor"))})
         matches.append(
             ExpectedMatch(
@@ -822,6 +1030,8 @@ def expected_matcher(dataset: CanonicalDataset) -> List[ExpectedMatch]:
                 du_model_id=du_model_id,
                 du_identity_key=du_identity_key,
                 du_profile_ids=du_profile_ids,
+                du_profile_statuses=du_profile_statuses,
+                du_view_ids=du_view_ids,
                 final_du_resolution_status=text(f.get("du_resolution_status")) or "UNKNOWN",
                 expected_du_resolution_status=expected_du_resolution_status(identity_records),
                 candidate_site_key=site_key,
@@ -1064,6 +1274,8 @@ def report_writer(dataset: AuditDataset, output: Path, summary_json: Optional[Pa
             result.du_model_id,
             result.du_identity_key,
             result.du_profile_ids,
+            result.du_profile_statuses,
+            result.du_view_ids,
             result.classification,
             result.reason_code,
             expected_item_text(result.expected_items),
@@ -1168,6 +1380,8 @@ def annotated_ecc_writer(
                 "du_model_id": du_file_metadata.get("du_model_id", ""),
                 "du_identity_key": du_file_metadata.get("du_identity_key", ""),
                 "du_profile_ids": du_file_metadata.get("du_profile_ids", ""),
+                "du_profile_statuses": du_file_metadata.get("du_profile_statuses", ""),
+                "du_view_ids": du_file_metadata.get("du_view_ids", ""),
                 "annotated_rows": annotated_rows,
                 "status_counts": dict(file_status_counts),
             }
@@ -1330,6 +1544,8 @@ def make_result(
         du_model_id=match.du_model_id,
         du_identity_key=match.du_identity_key,
         du_profile_ids=match.du_profile_ids,
+        du_profile_statuses=match.du_profile_statuses,
+        du_view_ids=match.du_view_ids,
         classification=classification,
         reason_code=reason_code,
         expected_items=match.expected_items,

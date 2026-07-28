@@ -36,6 +36,11 @@ python scripts/audit_final_po.py \
 nine unique create-pr-cd Project + DU Model identities and keeps the two
 CD-consolidation views under one identity.
 
+Each identity retains its exact profile-to-View mapping and profile lifecycle
+status. When the sibling create-pr-cd registry is available, loading validates
+the complete local identity/profile/View snapshot against that source contract
+and fails closed on drift.
+
 `--final-po-max-rows` can limit Final PO data rows for smoke tests against very large exports.
 
 Optional annotated ECC output:
@@ -111,6 +116,8 @@ The writer preserves original Final PO columns and appends:
 - DU Model ID
 - DU Identity Key
 - DU Profile ID
+- DU Profile Status
+- DU View ID
 - Audit Result
 - Reason Code
 - Expected Item

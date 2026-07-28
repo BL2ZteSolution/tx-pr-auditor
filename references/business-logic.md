@@ -29,6 +29,7 @@ For each Final PO row:
 1. Identify submitted site code, DU, item code, subcontractor, quantity, and ordering fields.
 2. Match site code or DU to generated ECC rows.
 3. Resolve the create-pr-cd DU identity from explicit ECC metadata or filename.
+   Preserve an explicit Profile ID and View ID as the exact source lineage.
 4. Resolve Final PO identity from Project Name, Project Code, product-model
    remarks, and logical-site name; require the resolved DU model to belong to
    the resolved project.

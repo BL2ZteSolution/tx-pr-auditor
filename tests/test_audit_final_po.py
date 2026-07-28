@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import sys
 import tempfile
 import unittest
@@ -106,6 +107,26 @@ class TxPrAuditorTests(unittest.TestCase):
         )
         self.assertEqual(len(consolidation["profile_ids"]), 2)
         self.assertEqual(len(consolidation["view_ids"]), 2)
+        expected_contract_status = (
+            "MATCHED"
+            if Path(registry["source_contract_path"]).is_file()
+            else "NOT_AVAILABLE"
+        )
+        self.assertEqual(registry["source_contract_status"], expected_contract_status)
+
+    def test_du_registry_drift_from_create_pr_cd_fails_closed(self):
+        registry = audit.load_du_registry()
+        if not Path(registry["source_contract_path"]).is_file():
+            self.skipTest("create-pr-cd source contract is not available")
+        registry_data = json.loads(audit.DEFAULT_DU_REGISTRY.read_text(encoding="utf-8"))
+        registry_data["identities"][0]["profiles"][0]["profile_status"] = "DRAFT"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "du_registry.json"
+            registry_path.write_text(json.dumps(registry_data), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "differs from create-pr-cd"):
+                audit.load_du_registry(registry_path)
 
     def test_all_nine_du_models_resolve_from_create_pr_cd_output_filenames(self):
         registry = audit.load_du_registry()
@@ -305,6 +326,62 @@ class TxPrAuditorTests(unittest.TestCase):
 
         self.assertEqual(results[0].classification, "Abnormal - Invalid PO")
         self.assertEqual(results[0].reason_code, "INVALID_CONFLICTING_DU_IDENTITY")
+
+    def test_cd_consolidation_preserves_exact_profile_and_view(self):
+        registry = audit.load_du_registry()
+        dataset = audit.canonical_builder(
+            audit.CanonicalDataset(
+                [],
+                [
+                    expected_record(
+                        source_file=(
+                            "Northern-GCI CD consolidation 2023 "
+                            "Planning PR 20260727.xlsx"
+                        ),
+                        du_profile_id="cd_consolidation_2023_decom_pr_v1",
+                        du_view_id="702960351133798763",
+                    )
+                ],
+                {},
+            ),
+            registry,
+        )
+
+        canonical = dataset.expected_records[0].canonical
+        self.assertEqual(
+            canonical["du_profile_ids"],
+            "cd_consolidation_2023_decom_pr_v1",
+        )
+        self.assertEqual(canonical["du_profile_statuses"], "DRAFT")
+        self.assertEqual(canonical["du_view_ids"], "702960351133798763")
+
+    def test_cd_consolidation_mismatched_profile_and_view_fails_closed(self):
+        registry = audit.load_du_registry()
+        dataset = audit.canonical_builder(
+            audit.CanonicalDataset(
+                [final_record(project_name="CD consolidation 2023")],
+                [
+                    expected_record(
+                        source_file=(
+                            "Northern-GCI CD consolidation 2023 "
+                            "Planning PR 20260727.xlsx"
+                        ),
+                        du_profile_id="cd_consolidation_2023_decom_pr_v1",
+                        du_view_id="8359047522524230651",
+                    )
+                ],
+                {},
+            ),
+            registry,
+        )
+
+        result = run_pipeline_for_records(
+            dataset.final_po_records,
+            dataset.expected_records,
+        )[0]
+
+        self.assertEqual(result.classification, "Abnormal - Invalid PO")
+        self.assertEqual(result.reason_code, "INVALID_CONFLICTING_DU_IDENTITY")
 
     def test_quantity_consumption_is_isolated_per_du_model(self):
         registry = audit.load_du_registry()
