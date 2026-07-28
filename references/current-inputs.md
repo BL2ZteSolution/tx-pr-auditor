@@ -85,6 +85,7 @@ Map these generated ECC headers into canonical fields:
 | `DU Model` or `DU Model Name` | du_model_name |
 | `DU Model ID` | du_model_id |
 | `DU Profile ID` | du_profile_id |
+| `DU Project Key` | du_project_key |
 
 ## Supported DU Identities
 
@@ -92,10 +93,12 @@ The registry contains nine unique Project + DU Model identities. The two
 `CD consolidation 2023` profiles are different views of the same identity and
 must not be counted as separate DUs.
 
-If Final PO identifies a DU model in Project Name or product-model remarks,
-matching is restricted to that DU. If the same submitted site and item match
-multiple identified DU models without a Final PO DU model, the row fails closed
-with `INVALID_AMBIGUOUS_DU_MODEL`.
+If Final PO identifies a DU model in Project Name, product-model remarks, or
+logical-site name, matching is restricted to that DU. Project Code is resolved
+to the registered create-pr-cd project and must agree with the DU model's
+project. If the same submitted site and item match multiple identified DU
+models without a Final PO DU model, the row fails closed with
+`INVALID_AMBIGUOUS_DU_MODEL`.
 
 ## Post-create-pr-cd Validation Role
 

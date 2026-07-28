@@ -100,6 +100,7 @@ ECC_FIELD_MAP = {
     "DU Model Name": "du_model_name",
     "DU Model ID": "du_model_id",
     "DU Profile ID": "du_profile_id",
+    "DU Project Key": "du_project_key",
 }
 
 AUDIT_HEADERS = [
@@ -333,6 +334,7 @@ def resolve_du_identity_evidence(
     du_model_name: Any = "",
     du_model_id: Any = "",
     du_profile_id: Any = "",
+    project_key: Any = "",
     source_text: Any = "",
 ) -> Tuple[Optional[Dict[str, Any]], str]:
     identities = registry["identities"]
@@ -387,7 +389,48 @@ def resolve_du_identity_evidence(
         return None, "CONFLICT"
     if not matches:
         return None, "UNKNOWN"
-    return next(iter(matches.values())), "RESOLVED"
+    identity = next(iter(matches.values()))
+    expected_project_key = text(project_key)
+    if expected_project_key and text(identity.get("project_key")) != expected_project_key:
+        return None, "CONFLICT"
+    return identity, "RESOLVED"
+
+
+def resolve_project_key(
+    registry: Dict[str, Any],
+    *,
+    explicit_project_key: Any = "",
+    project_name: Any = "",
+    project_code: Any = "",
+) -> Tuple[str, str]:
+    project_aliases = registry.get("project_aliases", {})
+    registered_keys = {
+        text(identity.get("project_key"))
+        for identity in registry["identities"]
+        if text(identity.get("project_key"))
+    }
+    explicit = text(explicit_project_key)
+    if explicit:
+        return (explicit, "RESOLVED") if explicit in registered_keys else ("", "UNKNOWN")
+
+    matched_keys: set[str] = set()
+    for value in (project_name, project_code):
+        normalized_value = normalize_du_phrase(value)
+        if not normalized_value:
+            continue
+        for registered_key, aliases in project_aliases.items():
+            normalized_aliases = {
+                normalize_du_phrase(alias)
+                for alias in aliases
+                if normalize_du_phrase(alias)
+            }
+            if normalized_value in normalized_aliases:
+                matched_keys.add(text(registered_key))
+    if len(matched_keys) > 1:
+        return "", "CONFLICT"
+    if not matched_keys:
+        return "", "UNKNOWN"
+    return next(iter(matched_keys)), "RESOLVED"
 
 
 def apply_du_identity(
@@ -401,11 +444,13 @@ def apply_du_identity(
         data["du_model_name"] = text(data.get("du_model_name"))
         data["du_model_id"] = text(data.get("du_model_id"))
         data["du_profile_ids"] = text(data.get("du_profile_id"))
+        data["du_project_key"] = text(data.get("du_project_key"))
         return data
     data["du_identity_key"] = text(identity["identity_key"])
     data["du_model_name"] = text(identity["du_model_name"])
     data["du_model_id"] = text(identity["du_model_id"])
     data["du_profile_ids"] = join_unique(identity.get("profile_ids", []))
+    data["du_project_key"] = text(identity.get("project_key"))
     return data
 
 
@@ -609,14 +654,22 @@ def canonical_builder(
         data["submitted_quantity"] = submitted_quantity(data)
         data["submitted_subcontractor_norm"] = normalize_subcontractor(data.get("submitted_subcontractor"))
         data["dispatch_sort_key"] = dispatch_sort_key(data)
+        final_project_key, final_project_status = resolve_project_key(
+            du_registry,
+            project_name=data.get("project_name"),
+            project_code=data.get("project_code"),
+        )
         final_identity, final_resolution_status = resolve_du_identity_evidence(
             du_registry,
+            project_key=final_project_key,
             source_text=" ".join(
                 text(data.get(field))
-                for field in ("project_name", "product_model_remark")
+                for field in ("project_name", "product_model_remark", "logical_site_name")
                 if text(data.get(field))
             ),
         )
+        if final_project_status == "CONFLICT":
+            final_identity, final_resolution_status = None, "CONFLICT"
         apply_du_identity(data, final_identity, final_resolution_status)
         final_records.append(replace(record, canonical=data))
 
@@ -629,13 +682,22 @@ def canonical_builder(
         data["expected_quantity"] = to_float(data.get("expected_quantity"), default=0.0)
         data["expected_subcontractor_norm"] = normalize_subcontractor(data.get("expected_subcontractor"))
         data["scope"] = infer_scope_from_ecc(record.source_file)
+        expected_project_key, expected_project_status = resolve_project_key(
+            du_registry,
+            explicit_project_key=data.get("du_project_key"),
+        )
         expected_identity, expected_resolution_status = resolve_du_identity_evidence(
             du_registry,
             du_model_name=data.get("du_model_name"),
             du_model_id=data.get("du_model_id"),
             du_profile_id=data.get("du_profile_id"),
+            project_key=expected_project_key,
             source_text=Path(record.source_file).name,
         )
+        if expected_project_status == "CONFLICT":
+            expected_identity, expected_resolution_status = None, "CONFLICT"
+        elif data.get("du_project_key") and expected_project_status == "UNKNOWN":
+            expected_identity, expected_resolution_status = None, "CONFLICT"
         apply_du_identity(data, expected_identity, expected_resolution_status)
         data["entitlement_key"] = entitlement_key(data)
         expected_records.append(replace(record, canonical=data))

@@ -179,6 +179,56 @@ class TxPrAuditorTests(unittest.TestCase):
         self.assertEqual(results[0].du_model_name, "MW EOS Swap")
         self.assertEqual(results[0].expected_quantity, 1.0)
 
+    def test_final_po_resolves_du_from_logical_site_name_and_project_code(self):
+        registry = audit.load_du_registry()
+        dataset = audit.canonical_builder(
+            audit.CanonicalDataset(
+                [
+                    final_record(
+                        project_name="Malaysia CelcomDigi project",
+                        project_code="P202202168750_D002",
+                        logical_site_name="Wireless RAN/TX Mini Project/S00495_PORT",
+                    )
+                ],
+                [],
+                {},
+            ),
+            registry,
+        )
+
+        canonical = dataset.final_po_records[0].canonical
+        self.assertEqual(canonical["du_model_name"], "TX Mini Project")
+        self.assertEqual(canonical["du_project_key"], "Malaysia_CelcomDigi_Project")
+        self.assertEqual(canonical["du_resolution_status"], "RESOLVED")
+
+    def test_final_po_project_and_du_model_conflict_fails_closed(self):
+        registry = audit.load_du_registry()
+        dataset = audit.canonical_builder(
+            audit.CanonicalDataset(
+                [
+                    final_record(
+                        project_code="P202211283695_D002",
+                        logical_site_name="Wireless RAN/TX Mini Project/S00495_PORT",
+                    )
+                ],
+                [
+                    expected_record(
+                        source_file="Northern-GCI TX Mini Project Planning PR 20260727.xlsx"
+                    )
+                ],
+                {},
+            ),
+            registry,
+        )
+
+        result = run_pipeline_for_records(
+            dataset.final_po_records,
+            dataset.expected_records,
+        )[0]
+
+        self.assertEqual(result.classification, "Abnormal - Invalid PO")
+        self.assertEqual(result.reason_code, "INVALID_CONFLICTING_DU_IDENTITY")
+
     def test_unidentified_final_po_does_not_merge_multiple_du_entitlements(self):
         registry = audit.load_du_registry()
         dataset = audit.canonical_builder(

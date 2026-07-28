@@ -29,8 +29,9 @@ For each Final PO row:
 1. Identify submitted site code, DU, item code, subcontractor, quantity, and ordering fields.
 2. Match site code or DU to generated ECC rows.
 3. Resolve the create-pr-cd DU identity from explicit ECC metadata or filename.
-4. Restrict matching by the Final PO DU model when Project Name or
-   product-model remarks identify one.
+4. Resolve Final PO identity from Project Name, Project Code, product-model
+   remarks, and logical-site name; require the resolved DU model to belong to
+   the resolved project.
 5. Reject generated ECC entitlement whose DU identity is unknown or whose
    model, profile, and filename evidence conflicts.
 6. If no generated ECC entitlement exists, return Invalid PO.

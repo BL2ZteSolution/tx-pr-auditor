@@ -2,6 +2,16 @@
   "schema_version": "1.0",
   "identity_rule": "iEPMS Project + DU Model",
   "source_contract": "create-pr-cd/config/registries/mw_du_profile_identity_registry.yaml",
+  "project_aliases": {
+    "Malaysia_CelcomDigi_Project": [
+      "Malaysia_CelcomDigi_Project",
+      "P202202168750_D002"
+    ],
+    "CelcomDigi_MW": [
+      "CelcomDigi_MW",
+      "P202211283695_D002"
+    ]
+  },
   "identities": [
     {
       "identity_key": "Malaysia_CelcomDigi_Project::4188808420049567786",
