@@ -28,18 +28,37 @@ For each Final PO row:
 
 1. Identify submitted site code, DU, item code, subcontractor, quantity, and ordering fields.
 2. Match site code or DU to generated ECC rows.
-3. If no generated ECC entitlement exists, return Invalid PO.
-4. Validate subcontractor against generated ECC subcontractor.
-5. Check whether submitted item code exists in generated ECC rows for the site.
-6. If site exists but item does not, return Wrong PO.
-7. If item is correct, compare quantity with remaining generated ECC entitlement in deterministic snapshot order.
-8. Return Normal for available quantity and Duplicate PO for excess quantity.
+3. Resolve the create-pr-cd DU identity from explicit ECC metadata or filename.
+   Preserve an explicit Profile ID and View ID as the exact source lineage.
+4. Resolve Final PO identity from Project Name, Project Code, product-model
+   remarks, and logical-site name; require the resolved DU model to belong to
+   the resolved project.
+5. Reject generated ECC entitlement whose DU identity is unknown or whose
+   model, profile, and filename evidence conflicts.
+6. If no generated ECC entitlement exists, return Invalid PO.
+7. If entitlement remains ambiguous across DU models, return Invalid PO.
+8. Restrict entitlement to the submitted scope when Final PO identifies it;
+   reject unresolved cross-scope matches instead of pooling them.
+9. Validate subcontractor against generated ECC subcontractor and restrict
+   quantity to that subcontractor.
+10. Check whether submitted item code exists in generated ECC rows for the site.
+11. If site exists but item does not, return Wrong PO.
+12. If item is correct, compare quantity with remaining generated ECC entitlement in deterministic snapshot order.
+13. Return Normal for available quantity and Duplicate PO for excess quantity.
 
 ## Invalid PO
 
 Use `Abnormal - Invalid PO` when:
 
 - No generated ECC entitlement exists for the submitted site or DU.
+- Generated ECC entitlement does not resolve to a registered DU identity.
+- Registered DU model, profile, or filename evidence conflicts.
+- The same site and item resolve to multiple DU models and Final PO does not
+  identify which DU applies.
+- The same site and item resolve to multiple scopes and Final PO does not
+  identify which scope applies.
+- The same item resolves to multiple subcontractors and Final PO does not
+  identify which subcontractor applies.
 - Submitted subcontractor differs from generated ECC subcontractor.
 
 Invalid PO consumes no expected quantity.
@@ -86,6 +105,11 @@ Normal:
 Invalid PO:
 
 - `INVALID_NOT_IN_CREATE_PR_CD_OUTPUT`
+- `INVALID_UNKNOWN_DU_MODEL`
+- `INVALID_CONFLICTING_DU_IDENTITY`
+- `INVALID_AMBIGUOUS_DU_MODEL`
+- `INVALID_AMBIGUOUS_SCOPE`
+- `INVALID_AMBIGUOUS_SUBCONTRACTOR`
 - `INVALID_SUBCON_CHANGED`
 
 Wrong PO:

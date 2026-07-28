@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import sys
 import tempfile
 import unittest
@@ -70,12 +71,445 @@ def expected_record(source_row=2, **overrides):
 
 def run_pipeline_for_records(final_records, expected_records):
     dataset = audit.CanonicalDataset(final_records, expected_records, metadata={})
+    if any(
+        "du_resolution_status" not in record.canonical
+        for record in [*final_records, *expected_records]
+    ):
+        dataset = audit.canonical_builder(dataset)
     matches = audit.expected_matcher(dataset)
     audited = audit.audit_engine(matches, dataset.metadata)
     return audit.duplicate_resolver(audited).results
 
 
 class TxPrAuditorTests(unittest.TestCase):
+    def test_du_registry_contains_nine_unique_create_pr_cd_identities(self):
+        registry = audit.load_du_registry()
+        identities = registry["identities"]
+
+        self.assertEqual(len(identities), 9)
+        self.assertEqual(len({item["identity_key"] for item in identities}), 9)
+        self.assertEqual(
+            {item["du_model_name"] for item in identities},
+            {
+                "TX Mini Project",
+                "2023 TX Rollout",
+                "MW EOS Swap",
+                "2023 Celcomdigi BAU",
+                "2024 Celcomdigi BAU",
+                "Celcomdigi USP",
+                "Jendela TX Migration",
+                "ZTE TX MINI",
+                "CD consolidation 2023",
+            },
+        )
+        consolidation = next(
+            item for item in identities if item["du_model_name"] == "CD consolidation 2023"
+        )
+        self.assertEqual(len(consolidation["profile_ids"]), 2)
+        self.assertEqual(len(consolidation["view_ids"]), 2)
+        expected_contract_status = (
+            "MATCHED"
+            if Path(registry["source_contract_path"]).is_file()
+            else "NOT_AVAILABLE"
+        )
+        self.assertEqual(registry["source_contract_status"], expected_contract_status)
+
+    def test_du_registry_drift_from_create_pr_cd_fails_closed(self):
+        registry = audit.load_du_registry()
+        if not Path(registry["source_contract_path"]).is_file():
+            self.skipTest("create-pr-cd source contract is not available")
+        registry_data = json.loads(audit.DEFAULT_DU_REGISTRY.read_text(encoding="utf-8"))
+        registry_data["identities"][0]["profiles"][0]["profile_status"] = "DRAFT"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "du_registry.json"
+            registry_path.write_text(json.dumps(registry_data), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "differs from create-pr-cd"):
+                audit.load_du_registry(registry_path)
+
+    def test_all_nine_du_models_resolve_from_create_pr_cd_output_filenames(self):
+        registry = audit.load_du_registry()
+
+        for identity in registry["identities"]:
+            with self.subTest(du_model=identity["du_model_name"]):
+                source_file = (
+                    f"Northern-GCI {identity['du_model_name']} "
+                    "TSS PR 20260727.xlsx"
+                )
+                resolved = audit.resolve_du_identity(
+                    registry,
+                    source_text=source_file,
+                )
+
+                self.assertIsNotNone(resolved)
+                self.assertEqual(resolved["identity_key"], identity["identity_key"])
+
+    def test_canonical_builder_reports_nine_du_support_and_identifies_ecc_files(self):
+        registry = audit.load_du_registry()
+        expected = [
+            expected_record(
+                source_row=index + 2,
+                source_file=(
+                    f"Northern-GCI {identity['du_model_name']} "
+                    "TSS PR 20260727.xlsx"
+                ),
+            )
+            for index, identity in enumerate(registry["identities"])
+        ]
+
+        canonical = audit.canonical_builder(
+            audit.CanonicalDataset([], expected, {}),
+            registry,
+        )
+
+        self.assertEqual(
+            {record.canonical["du_identity_key"] for record in canonical.expected_records},
+            {item["identity_key"] for item in registry["identities"]},
+        )
+        self.assertEqual(canonical.metadata["du_support"]["supported_du_count"], 9)
+        self.assertEqual(canonical.metadata["du_support"]["identified_ecc_file_count"], 9)
+        self.assertEqual(canonical.metadata["du_support"]["unknown_ecc_file_count"], 0)
+
+    def test_final_po_du_model_disambiguates_same_site_entitlement(self):
+        registry = audit.load_du_registry()
+        dataset = audit.canonical_builder(
+            audit.CanonicalDataset(
+                [final_record(project_name="MW EOS Swap")],
+                [
+                    expected_record(
+                        source_file="Northern-GCI MW EOS Swap Planning PR 20260727.xlsx",
+                        expected_quantity=1.0,
+                    ),
+                    expected_record(
+                        source_file="Northern-GCI ZTE TX MINI Planning PR 20260727.xlsx",
+                        expected_quantity=5.0,
+                    ),
+                ],
+                {},
+            ),
+            registry,
+        )
+
+        results = run_pipeline_for_records(
+            dataset.final_po_records,
+            dataset.expected_records,
+        )
+
+        self.assertEqual(results[0].classification, "Normal")
+        self.assertEqual(results[0].du_model_name, "MW EOS Swap")
+        self.assertEqual(results[0].expected_quantity, 1.0)
+
+    def test_final_po_resolves_du_from_logical_site_name_and_project_code(self):
+        registry = audit.load_du_registry()
+        dataset = audit.canonical_builder(
+            audit.CanonicalDataset(
+                [
+                    final_record(
+                        project_name="Malaysia CelcomDigi project",
+                        project_code="P202202168750_D002",
+                        logical_site_name="Wireless RAN/TX Mini Project/S00495_PORT",
+                    )
+                ],
+                [],
+                {},
+            ),
+            registry,
+        )
+
+        canonical = dataset.final_po_records[0].canonical
+        self.assertEqual(canonical["du_model_name"], "TX Mini Project")
+        self.assertEqual(canonical["du_project_key"], "Malaysia_CelcomDigi_Project")
+        self.assertEqual(canonical["du_resolution_status"], "RESOLVED")
+
+    def test_final_po_project_and_du_model_conflict_fails_closed(self):
+        registry = audit.load_du_registry()
+        dataset = audit.canonical_builder(
+            audit.CanonicalDataset(
+                [
+                    final_record(
+                        project_code="P202211283695_D002",
+                        logical_site_name="Wireless RAN/TX Mini Project/S00495_PORT",
+                    )
+                ],
+                [
+                    expected_record(
+                        source_file="Northern-GCI TX Mini Project Planning PR 20260727.xlsx"
+                    )
+                ],
+                {},
+            ),
+            registry,
+        )
+
+        result = run_pipeline_for_records(
+            dataset.final_po_records,
+            dataset.expected_records,
+        )[0]
+
+        self.assertEqual(result.classification, "Abnormal - Invalid PO")
+        self.assertEqual(result.reason_code, "INVALID_CONFLICTING_DU_IDENTITY")
+
+    def test_unidentified_final_po_does_not_merge_multiple_du_entitlements(self):
+        registry = audit.load_du_registry()
+        dataset = audit.canonical_builder(
+            audit.CanonicalDataset(
+                [final_record(project_name="")],
+                [
+                    expected_record(
+                        source_file="Northern-GCI MW EOS Swap Planning PR 20260727.xlsx",
+                    ),
+                    expected_record(
+                        source_file="Northern-GCI ZTE TX MINI Planning PR 20260727.xlsx",
+                    ),
+                ],
+                {},
+            ),
+            registry,
+        )
+
+        results = run_pipeline_for_records(
+            dataset.final_po_records,
+            dataset.expected_records,
+        )
+
+        self.assertEqual(results[0].classification, "Abnormal - Invalid PO")
+        self.assertEqual(results[0].reason_code, "INVALID_AMBIGUOUS_DU_MODEL")
+        self.assertEqual(results[0].du_identity_key, "MULTI")
+
+    def test_unknown_ecc_du_identity_fails_closed(self):
+        registry = audit.load_du_registry()
+        dataset = audit.canonical_builder(
+            audit.CanonicalDataset(
+                [final_record(project_name="")],
+                [
+                    expected_record(
+                        source_file="Northern-GCI Unregistered Model Planning PR 20260727.xlsx"
+                    )
+                ],
+                {},
+            ),
+            registry,
+        )
+
+        results = run_pipeline_for_records(
+            dataset.final_po_records,
+            dataset.expected_records,
+        )
+
+        self.assertEqual(results[0].classification, "Abnormal - Invalid PO")
+        self.assertEqual(results[0].reason_code, "INVALID_UNKNOWN_DU_MODEL")
+
+    def test_conflicting_ecc_du_identity_evidence_fails_closed(self):
+        registry = audit.load_du_registry()
+        tx_mini = next(
+            item for item in registry["identities"] if item["du_model_name"] == "TX Mini Project"
+        )
+        dataset = audit.canonical_builder(
+            audit.CanonicalDataset(
+                [final_record(project_name="")],
+                [
+                    expected_record(
+                        source_file="Northern-GCI MW EOS Swap Planning PR 20260727.xlsx",
+                        du_model_id=tx_mini["du_model_id"],
+                    )
+                ],
+                {},
+            ),
+            registry,
+        )
+
+        results = run_pipeline_for_records(
+            dataset.final_po_records,
+            dataset.expected_records,
+        )
+
+        self.assertEqual(results[0].classification, "Abnormal - Invalid PO")
+        self.assertEqual(results[0].reason_code, "INVALID_CONFLICTING_DU_IDENTITY")
+
+    def test_cd_consolidation_preserves_exact_profile_and_view(self):
+        registry = audit.load_du_registry()
+        dataset = audit.canonical_builder(
+            audit.CanonicalDataset(
+                [],
+                [
+                    expected_record(
+                        source_file=(
+                            "Northern-GCI CD consolidation 2023 "
+                            "Planning PR 20260727.xlsx"
+                        ),
+                        du_profile_id="cd_consolidation_2023_decom_pr_v1",
+                        du_view_id="702960351133798763",
+                    )
+                ],
+                {},
+            ),
+            registry,
+        )
+
+        canonical = dataset.expected_records[0].canonical
+        self.assertEqual(
+            canonical["du_profile_ids"],
+            "cd_consolidation_2023_decom_pr_v1",
+        )
+        self.assertEqual(canonical["du_profile_statuses"], "DRAFT")
+        self.assertEqual(canonical["du_view_ids"], "702960351133798763")
+
+    def test_cd_consolidation_mismatched_profile_and_view_fails_closed(self):
+        registry = audit.load_du_registry()
+        dataset = audit.canonical_builder(
+            audit.CanonicalDataset(
+                [final_record(project_name="CD consolidation 2023")],
+                [
+                    expected_record(
+                        source_file=(
+                            "Northern-GCI CD consolidation 2023 "
+                            "Planning PR 20260727.xlsx"
+                        ),
+                        du_profile_id="cd_consolidation_2023_decom_pr_v1",
+                        du_view_id="8359047522524230651",
+                    )
+                ],
+                {},
+            ),
+            registry,
+        )
+
+        result = run_pipeline_for_records(
+            dataset.final_po_records,
+            dataset.expected_records,
+        )[0]
+
+        self.assertEqual(result.classification, "Abnormal - Invalid PO")
+        self.assertEqual(result.reason_code, "INVALID_CONFLICTING_DU_IDENTITY")
+
+    def test_quantity_consumption_is_isolated_per_du_model(self):
+        registry = audit.load_du_registry()
+        dataset = audit.canonical_builder(
+            audit.CanonicalDataset(
+                [
+                    final_record(source_row=2, project_name="MW EOS Swap"),
+                    final_record(source_row=3, project_name="ZTE TX MINI"),
+                ],
+                [
+                    expected_record(
+                        source_file="Northern-GCI MW EOS Swap Planning PR 20260727.xlsx",
+                    ),
+                    expected_record(
+                        source_file="Northern-GCI ZTE TX MINI Planning PR 20260727.xlsx",
+                    ),
+                ],
+                {},
+            ),
+            registry,
+        )
+
+        results = run_pipeline_for_records(
+            dataset.final_po_records,
+            dataset.expected_records,
+        )
+
+        self.assertEqual([result.classification for result in results], ["Normal", "Normal"])
+        self.assertEqual(
+            {result.du_model_name for result in results},
+            {"MW EOS Swap", "ZTE TX MINI"},
+        )
+
+    def test_expected_quantity_is_isolated_by_scope(self):
+        registry = audit.load_du_registry()
+        dataset = audit.canonical_builder(
+            audit.CanonicalDataset(
+                [
+                    final_record(
+                        business_domain="Survey",
+                        submitted_item_description="TSS survey",
+                        submitted_quantity=2.0,
+                    )
+                ],
+                [
+                    expected_record(
+                        source_file="Northern-GCI TX Mini Project TSS PR 20260727.xlsx",
+                        expected_quantity=1.0,
+                    ),
+                    expected_record(
+                        source_row=3,
+                        source_file="Northern-GCI TX Mini Project TI PR 20260727.xlsx",
+                        expected_quantity=5.0,
+                    ),
+                ],
+                {},
+            ),
+            registry,
+        )
+
+        result = run_pipeline_for_records(
+            dataset.final_po_records,
+            dataset.expected_records,
+        )[0]
+
+        self.assertEqual(result.scope, "TSS")
+        self.assertEqual(result.expected_quantity, 1.0)
+        self.assertEqual(result.reason_code, "DUPLICATE_PARTIAL_QUANTITY")
+
+    def test_unknown_final_scope_does_not_pool_multiple_scopes(self):
+        registry = audit.load_du_registry()
+        dataset = audit.canonical_builder(
+            audit.CanonicalDataset(
+                [
+                    final_record(
+                        business_domain="",
+                        submitted_item_description="Unclassified service",
+                    )
+                ],
+                [
+                    expected_record(
+                        source_file="Northern-GCI TX Mini Project TSS PR 20260727.xlsx",
+                    ),
+                    expected_record(
+                        source_row=3,
+                        source_file="Northern-GCI TX Mini Project TI PR 20260727.xlsx",
+                    ),
+                ],
+                {},
+            ),
+            registry,
+        )
+
+        result = run_pipeline_for_records(
+            dataset.final_po_records,
+            dataset.expected_records,
+        )[0]
+
+        self.assertEqual(result.classification, "Abnormal - Invalid PO")
+        self.assertEqual(result.reason_code, "INVALID_AMBIGUOUS_SCOPE")
+
+    def test_expected_quantity_is_isolated_by_subcontractor(self):
+        registry = audit.load_du_registry()
+        dataset = audit.canonical_builder(
+            audit.CanonicalDataset(
+                [final_record(submitted_subcontractor="GCI", submitted_quantity=2.0)],
+                [
+                    expected_record(expected_subcontractor="GCI", expected_quantity=1.0),
+                    expected_record(
+                        source_row=3,
+                        expected_subcontractor="OTHER",
+                        expected_quantity=5.0,
+                    ),
+                ],
+                {},
+            ),
+            registry,
+        )
+
+        result = run_pipeline_for_records(
+            dataset.final_po_records,
+            dataset.expected_records,
+        )[0]
+
+        self.assertEqual(result.expected_quantity, 1.0)
+        self.assertEqual(result.expected_subcontractor, "GCI")
+        self.assertEqual(result.reason_code, "DUPLICATE_PARTIAL_QUANTITY")
+
     def test_filter_final_po_period_keeps_only_matching_dispatch_month(self):
         january = final_record(source_row=2, dispatch_date=datetime(2026, 1, 3))
         february = final_record(source_row=3, dispatch_date="2026-02-04")

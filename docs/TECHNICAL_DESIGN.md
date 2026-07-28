@@ -32,6 +32,15 @@ python scripts/audit_final_po.py \
 
 `--expected-ecc` is required and can be repeated. Each value can be an ECC workbook or a directory containing generated ECC workbooks.
 
+`--du-registry` defaults to `config/du_registry.json`. The registry mirrors the
+nine unique create-pr-cd Project + DU Model identities and keeps the two
+CD-consolidation views under one identity.
+
+Each identity retains its exact profile-to-View mapping and profile lifecycle
+status. When the sibling create-pr-cd registry is available, loading validates
+the complete local identity/profile/View snapshot against that source contract
+and fails closed on drift.
+
 `--final-po-max-rows` can limit Final PO data rows for smoke tests against very large exports.
 
 Optional annotated ECC output:
@@ -72,6 +81,7 @@ Generated ECC rows are expected entitlement. Final PO rows are submitted claims.
 
 Primary matching:
 
+- Final PO DU model evidence to the registered create-pr-cd DU identity
 - Final PO physical site code to ECC `Site ID*`
 - Final PO DU/logical site code to ECC `Delivery Unit Code*`
 - Final PO item code to ECC `PBOM Code*`
@@ -90,6 +100,7 @@ Scope is inferred from ECC file names when possible:
 |---|---|---|
 | Normal | `NORMAL_FULL` | Submitted row matches generated ECC entitlement and quantity remains. |
 | Abnormal - Invalid PO | `INVALID_NOT_IN_CREATE_PR_CD_OUTPUT` | Submitted site or DU has no generated ECC entitlement. |
+| Abnormal - Invalid PO | `INVALID_AMBIGUOUS_DU_MODEL` | Site and item match more than one DU model without Final PO DU identification. |
 | Abnormal - Invalid PO | `INVALID_SUBCON_CHANGED` | Submitted subcontractor differs from generated ECC subcontractor. |
 | Abnormal - Wrong PO | `WRONG_LINE_ITEM_MAPPING` | Site/DU exists but submitted item code is not expected. |
 | Abnormal - Duplicate PO | `DUPLICATE_FULL_QUANTITY` | Entire submitted quantity exceeds remaining ECC entitlement. |
@@ -101,6 +112,12 @@ The writer preserves original Final PO columns and appends:
 
 - Source Row
 - Scope
+- DU Model
+- DU Model ID
+- DU Identity Key
+- DU Profile ID
+- DU Profile Status
+- DU View ID
 - Audit Result
 - Reason Code
 - Expected Item
