@@ -31,19 +31,23 @@ For each Final PO row:
 3. Resolve the create-pr-cd DU identity from explicit ECC metadata or filename.
 4. Restrict matching by the Final PO DU model when Project Name or
    product-model remarks identify one.
-5. If no generated ECC entitlement exists, return Invalid PO.
-6. If entitlement remains ambiguous across DU models, return Invalid PO.
-7. Validate subcontractor against generated ECC subcontractor.
-8. Check whether submitted item code exists in generated ECC rows for the site.
-9. If site exists but item does not, return Wrong PO.
-10. If item is correct, compare quantity with remaining generated ECC entitlement in deterministic snapshot order.
-11. Return Normal for available quantity and Duplicate PO for excess quantity.
+5. Reject generated ECC entitlement whose DU identity is unknown or whose
+   model, profile, and filename evidence conflicts.
+6. If no generated ECC entitlement exists, return Invalid PO.
+7. If entitlement remains ambiguous across DU models, return Invalid PO.
+8. Validate subcontractor against generated ECC subcontractor.
+9. Check whether submitted item code exists in generated ECC rows for the site.
+10. If site exists but item does not, return Wrong PO.
+11. If item is correct, compare quantity with remaining generated ECC entitlement in deterministic snapshot order.
+12. Return Normal for available quantity and Duplicate PO for excess quantity.
 
 ## Invalid PO
 
 Use `Abnormal - Invalid PO` when:
 
 - No generated ECC entitlement exists for the submitted site or DU.
+- Generated ECC entitlement does not resolve to a registered DU identity.
+- Registered DU model, profile, or filename evidence conflicts.
 - The same site and item resolve to multiple DU models and Final PO does not
   identify which DU applies.
 - Submitted subcontractor differs from generated ECC subcontractor.
@@ -92,6 +96,8 @@ Normal:
 Invalid PO:
 
 - `INVALID_NOT_IN_CREATE_PR_CD_OUTPUT`
+- `INVALID_UNKNOWN_DU_MODEL`
+- `INVALID_CONFLICTING_DU_IDENTITY`
 - `INVALID_AMBIGUOUS_DU_MODEL`
 - `INVALID_SUBCON_CHANGED`
 

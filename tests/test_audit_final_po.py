@@ -70,6 +70,11 @@ def expected_record(source_row=2, **overrides):
 
 def run_pipeline_for_records(final_records, expected_records):
     dataset = audit.CanonicalDataset(final_records, expected_records, metadata={})
+    if any(
+        "du_resolution_status" not in record.canonical
+        for record in [*final_records, *expected_records]
+    ):
+        dataset = audit.canonical_builder(dataset)
     matches = audit.expected_matcher(dataset)
     audited = audit.audit_engine(matches, dataset.metadata)
     return audit.duplicate_resolver(audited).results
@@ -200,6 +205,52 @@ class TxPrAuditorTests(unittest.TestCase):
         self.assertEqual(results[0].classification, "Abnormal - Invalid PO")
         self.assertEqual(results[0].reason_code, "INVALID_AMBIGUOUS_DU_MODEL")
         self.assertEqual(results[0].du_identity_key, "MULTI")
+
+    def test_unknown_ecc_du_identity_fails_closed(self):
+        registry = audit.load_du_registry()
+        dataset = audit.canonical_builder(
+            audit.CanonicalDataset(
+                [final_record(project_name="")],
+                [expected_record(source_file="unregistered-output.xlsx")],
+                {},
+            ),
+            registry,
+        )
+
+        results = run_pipeline_for_records(
+            dataset.final_po_records,
+            dataset.expected_records,
+        )
+
+        self.assertEqual(results[0].classification, "Abnormal - Invalid PO")
+        self.assertEqual(results[0].reason_code, "INVALID_UNKNOWN_DU_MODEL")
+
+    def test_conflicting_ecc_du_identity_evidence_fails_closed(self):
+        registry = audit.load_du_registry()
+        tx_mini = next(
+            item for item in registry["identities"] if item["du_model_name"] == "TX Mini Project"
+        )
+        dataset = audit.canonical_builder(
+            audit.CanonicalDataset(
+                [final_record(project_name="")],
+                [
+                    expected_record(
+                        source_file="Northern-GCI MW EOS Swap Planning PR 20260727.xlsx",
+                        du_model_id=tx_mini["du_model_id"],
+                    )
+                ],
+                {},
+            ),
+            registry,
+        )
+
+        results = run_pipeline_for_records(
+            dataset.final_po_records,
+            dataset.expected_records,
+        )
+
+        self.assertEqual(results[0].classification, "Abnormal - Invalid PO")
+        self.assertEqual(results[0].reason_code, "INVALID_CONFLICTING_DU_IDENTITY")
 
     def test_quantity_consumption_is_isolated_per_du_model(self):
         registry = audit.load_du_registry()

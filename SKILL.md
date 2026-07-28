@@ -118,6 +118,7 @@ Decision priority:
 Invalid examples:
 
 - No generated ECC entitlement exists for the submitted site or DU.
+- Generated ECC entitlement has an unknown or conflicting DU identity.
 - The same site/item entitlement exists in multiple DU models and Final PO
   does not identify the intended DU model.
 - Submitted subcontractor differs from generated ECC subcontractor.

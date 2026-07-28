@@ -171,6 +171,8 @@ class ExpectedMatch:
     du_model_id: str
     du_identity_key: str
     du_profile_ids: str
+    final_du_resolution_status: str
+    expected_du_resolution_status: str
     candidate_site_key: str
     expected_items: List[ExpectedECCRecord]
     exact_item_records: List[ExpectedECCRecord]
@@ -314,39 +316,85 @@ def resolve_du_identity(
     du_profile_id: Any = "",
     source_text: Any = "",
 ) -> Optional[Dict[str, Any]]:
+    identity, status = resolve_du_identity_evidence(
+        registry,
+        du_model_name=du_model_name,
+        du_model_id=du_model_id,
+        du_profile_id=du_profile_id,
+        source_text=source_text,
+    )
+    return identity if status == "RESOLVED" else None
+
+
+def resolve_du_identity_evidence(
+    registry: Dict[str, Any],
+    *,
+    du_model_name: Any = "",
+    du_model_id: Any = "",
+    du_profile_id: Any = "",
+    source_text: Any = "",
+) -> Tuple[Optional[Dict[str, Any]], str]:
     identities = registry["identities"]
+    matches: Dict[str, Dict[str, Any]] = {}
+    unknown_explicit_evidence = False
+
     model_id = text(du_model_id)
-    profile_id = text(du_profile_id)
     if model_id:
-        return next((identity for identity in identities if text(identity["du_model_id"]) == model_id), None)
+        identity = next(
+            (item for item in identities if text(item["du_model_id"]) == model_id),
+            None,
+        )
+        if identity is None:
+            unknown_explicit_evidence = True
+        else:
+            matches[text(identity["identity_key"])] = identity
+
+    profile_id = text(du_profile_id)
     if profile_id:
-        return next(
+        identity = next(
             (
-                identity
-                for identity in identities
-                if profile_id in {text(value) for value in identity.get("profile_ids", [])}
+                item
+                for item in identities
+                if profile_id in {text(value) for value in item.get("profile_ids", [])}
             ),
             None,
         )
+        if identity is None:
+            unknown_explicit_evidence = True
+        else:
+            matches[text(identity["identity_key"])] = identity
 
-    haystacks = [normalize_du_phrase(value) for value in (du_model_name, source_text) if text(value)]
-    matches: List[Tuple[int, Dict[str, Any]]] = []
-    for identity in identities:
-        aliases = list(identity.get("aliases", [])) + [identity.get("du_model_name", "")]
-        for alias in aliases:
-            needle = normalize_du_phrase(alias)
-            if needle and any(f" {needle} " in f" {haystack} " for haystack in haystacks):
-                matches.append((len(needle), identity))
-                break
+    for value, explicit in ((du_model_name, True), (source_text, False)):
+        value_text = text(value)
+        if not value_text:
+            continue
+        haystack = normalize_du_phrase(value_text)
+        value_matches: Dict[str, Dict[str, Any]] = {}
+        for identity in identities:
+            aliases = list(identity.get("aliases", [])) + [identity.get("du_model_name", "")]
+            if any(
+                (needle := normalize_du_phrase(alias))
+                and f" {needle} " in f" {haystack} "
+                for alias in aliases
+            ):
+                value_matches[text(identity["identity_key"])] = identity
+        if explicit and not value_matches:
+            unknown_explicit_evidence = True
+        matches.update(value_matches)
+
+    if len(matches) > 1 or (matches and unknown_explicit_evidence):
+        return None, "CONFLICT"
     if not matches:
-        return None
-    matches.sort(key=lambda item: item[0], reverse=True)
-    top_length = matches[0][0]
-    top = {match[1]["identity_key"]: match[1] for match in matches if match[0] == top_length}
-    return next(iter(top.values())) if len(top) == 1 else None
+        return None, "UNKNOWN"
+    return next(iter(matches.values())), "RESOLVED"
 
 
-def apply_du_identity(data: Dict[str, Any], identity: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def apply_du_identity(
+    data: Dict[str, Any],
+    identity: Optional[Dict[str, Any]],
+    resolution_status: Optional[str] = None,
+) -> Dict[str, Any]:
+    data["du_resolution_status"] = resolution_status or ("RESOLVED" if identity else "UNKNOWN")
     if identity is None:
         data["du_identity_key"] = ""
         data["du_model_name"] = text(data.get("du_model_name"))
@@ -560,7 +608,7 @@ def canonical_builder(
         data["submitted_quantity"] = submitted_quantity(data)
         data["submitted_subcontractor_norm"] = normalize_subcontractor(data.get("submitted_subcontractor"))
         data["dispatch_sort_key"] = dispatch_sort_key(data)
-        final_identity = resolve_du_identity(
+        final_identity, final_resolution_status = resolve_du_identity_evidence(
             du_registry,
             source_text=" ".join(
                 text(data.get(field))
@@ -568,7 +616,7 @@ def canonical_builder(
                 if text(data.get(field))
             ),
         )
-        apply_du_identity(data, final_identity)
+        apply_du_identity(data, final_identity, final_resolution_status)
         final_records.append(replace(record, canonical=data))
 
     expected_records: List[ExpectedECCRecord] = []
@@ -580,14 +628,14 @@ def canonical_builder(
         data["expected_quantity"] = to_float(data.get("expected_quantity"), default=0.0)
         data["expected_subcontractor_norm"] = normalize_subcontractor(data.get("expected_subcontractor"))
         data["scope"] = infer_scope_from_ecc(record.source_file)
-        expected_identity = resolve_du_identity(
+        expected_identity, expected_resolution_status = resolve_du_identity_evidence(
             du_registry,
             du_model_name=data.get("du_model_name"),
             du_model_id=data.get("du_model_id"),
             du_profile_id=data.get("du_profile_id"),
             source_text=Path(record.source_file).name,
         )
-        apply_du_identity(data, expected_identity)
+        apply_du_identity(data, expected_identity, expected_resolution_status)
         data["entitlement_key"] = entitlement_key(data)
         expected_records.append(replace(record, canonical=data))
 
@@ -693,6 +741,8 @@ def expected_matcher(dataset: CanonicalDataset) -> List[ExpectedMatch]:
                 du_model_id=du_model_id,
                 du_identity_key=du_identity_key,
                 du_profile_ids=du_profile_ids,
+                final_du_resolution_status=text(f.get("du_resolution_status")) or "UNKNOWN",
+                expected_du_resolution_status=expected_du_resolution_status(identity_records),
                 candidate_site_key=site_key,
                 expected_items=expected_items,
                 exact_item_records=exact,
@@ -728,6 +778,35 @@ def audit_engine(matches: Sequence[ExpectedMatch], metadata: Dict[str, Any]) -> 
                     "Abnormal - Invalid PO",
                     "INVALID_NOT_IN_CREATE_PR_CD_OUTPUT",
                     "No generated ECC entitlement exists for the submitted site or DU.",
+                    expected_subcontractor,
+                    consumes=False,
+                )
+            )
+            continue
+
+        if (
+            match.final_du_resolution_status == "CONFLICT"
+            or match.expected_du_resolution_status == "CONFLICT"
+        ):
+            results.append(
+                make_result(
+                    match,
+                    "Abnormal - Invalid PO",
+                    "INVALID_CONFLICTING_DU_IDENTITY",
+                    "DU identity evidence conflicts across registered model, profile, or filename signals.",
+                    expected_subcontractor,
+                    consumes=False,
+                )
+            )
+            continue
+
+        if match.expected_du_resolution_status == "UNKNOWN":
+            results.append(
+                make_result(
+                    match,
+                    "Abnormal - Invalid PO",
+                    "INVALID_UNKNOWN_DU_MODEL",
+                    "Generated ECC entitlement is not associated with a registered create-pr-cd DU identity.",
                     expected_subcontractor,
                     consumes=False,
                 )
@@ -1179,6 +1258,18 @@ def consumption_key(result: AuditResult) -> Tuple[str, str, str, str, str]:
         f.get("submitted_item_code") or "",
         normalize_subcontractor(result.expected_subcontractor),
     )
+
+
+def expected_du_resolution_status(records: Sequence[ExpectedECCRecord]) -> str:
+    statuses = {
+        text(record.canonical.get("du_resolution_status")) or "UNKNOWN"
+        for record in records
+    }
+    if "CONFLICT" in statuses:
+        return "CONFLICT"
+    if "UNKNOWN" in statuses:
+        return "UNKNOWN"
+    return "RESOLVED"
 
 
 def expected_evidence(records: Sequence[ExpectedECCRecord]) -> str:
