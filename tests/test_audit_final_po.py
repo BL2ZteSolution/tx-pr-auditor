@@ -105,8 +105,13 @@ class TxPrAuditorTests(unittest.TestCase):
         consolidation = next(
             item for item in identities if item["du_model_name"] == "CD consolidation 2023"
         )
-        self.assertEqual(len(consolidation["profile_ids"]), 2)
+        self.assertEqual(
+            consolidation["profile_ids"],
+            ["celcomdigi_cd_consolidation_2023_pr_v1"],
+        )
         self.assertEqual(len(consolidation["view_ids"]), 2)
+        tx_mini = next(item for item in identities if item["du_model_name"] == "TX Mini Project")
+        self.assertEqual(tx_mini["profiles"][0]["profile_status"], "PRODUCTION")
         expected_contract_status = (
             "MATCHED"
             if Path(registry["source_contract_path"]).is_file()
@@ -338,7 +343,7 @@ class TxPrAuditorTests(unittest.TestCase):
                             "Northern-GCI CD consolidation 2023 "
                             "Planning PR 20260727.xlsx"
                         ),
-                        du_profile_id="cd_consolidation_2023_decom_pr_v1",
+                        du_profile_id="celcomdigi_cd_consolidation_2023_pr_v1",
                         du_view_id="702960351133798763",
                     )
                 ],
@@ -350,12 +355,12 @@ class TxPrAuditorTests(unittest.TestCase):
         canonical = dataset.expected_records[0].canonical
         self.assertEqual(
             canonical["du_profile_ids"],
-            "cd_consolidation_2023_decom_pr_v1",
+            "celcomdigi_cd_consolidation_2023_pr_v1",
         )
         self.assertEqual(canonical["du_profile_statuses"], "DRAFT")
         self.assertEqual(canonical["du_view_ids"], "702960351133798763")
 
-    def test_cd_consolidation_mismatched_profile_and_view_fails_closed(self):
+    def test_cd_consolidation_legacy_split_profile_fails_closed(self):
         registry = audit.load_du_registry()
         dataset = audit.canonical_builder(
             audit.CanonicalDataset(

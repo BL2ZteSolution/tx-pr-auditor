@@ -24,7 +24,7 @@
       "profiles": [
         {
           "profile_id": "tx_mini_pr_v1",
-          "profile_status": "PR_INPUT_READY",
+          "profile_status": "PRODUCTION",
           "view_ids": ["2477626672974883536"]
         }
       ]
@@ -147,24 +147,19 @@
       "du_model_name": "CD consolidation 2023",
       "du_model_id": "8359047522524182050",
       "aliases": ["CD consolidation 2023"],
-      "profile_ids": [
-        "cd_consolidation_2023_decom_pr_v1",
-        "cd_consolidation_2023_rollout_pr_v1"
-      ],
+      "profile_ids": ["celcomdigi_cd_consolidation_2023_pr_v1"],
       "view_ids": [
         "702960351133798763",
         "8359047522524230651"
       ],
       "profiles": [
         {
-          "profile_id": "cd_consolidation_2023_decom_pr_v1",
+          "profile_id": "celcomdigi_cd_consolidation_2023_pr_v1",
           "profile_status": "DRAFT",
-          "view_ids": ["702960351133798763"]
-        },
-        {
-          "profile_id": "cd_consolidation_2023_rollout_pr_v1",
-          "profile_status": "DRAFT",
-          "view_ids": ["8359047522524230651"]
+          "view_ids": [
+            "702960351133798763",
+            "8359047522524230651"
+          ]
         }
       ]
     }
