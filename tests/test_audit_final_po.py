@@ -82,6 +82,15 @@ def run_pipeline_for_records(final_records, expected_records):
 
 
 class TxPrAuditorTests(unittest.TestCase):
+    def tearDown(self):
+        audit.set_cancellation_probe(None)
+
+    def test_large_pipeline_checks_cooperative_cancellation(self):
+        audit.set_cancellation_probe(lambda: (_ for _ in ()).throw(RuntimeError("cancelled-by-test")))
+        records = [final_record(source_row=index + 2, site_code=f"SITE-{index:04d}") for index in range(1000)]
+        with self.assertRaisesRegex(RuntimeError, "cancelled-by-test"):
+            audit.expected_matcher(audit.CanonicalDataset(records, [], {}))
+
     def test_du_registry_contains_nine_unique_create_pr_cd_identities(self):
         registry = audit.load_du_registry()
         identities = registry["identities"]
