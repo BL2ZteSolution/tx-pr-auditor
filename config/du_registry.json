@@ -40,7 +40,7 @@
       "profiles": [
         {
           "profile_id": "tx_rollout_2023_pr_v1",
-          "profile_status": "PR_INPUT_READY",
+          "profile_status": "PRODUCTION",
           "view_ids": ["8530399820526021092"]
         }
       ]
@@ -56,7 +56,7 @@
       "profiles": [
         {
           "profile_id": "mw_eos_swap_pr_v1",
-          "profile_status": "PR_INPUT_READY",
+          "profile_status": "PRODUCTION",
           "view_ids": ["7476572371505372260"]
         }
       ]
@@ -72,7 +72,7 @@
       "profiles": [
         {
           "profile_id": "celcomdigi_bau_2023_pr_v1",
-          "profile_status": "PR_INPUT_READY",
+          "profile_status": "PRODUCTION",
           "view_ids": ["3882899459299681347"]
         }
       ]
@@ -88,7 +88,7 @@
       "profiles": [
         {
           "profile_id": "celcomdigi_bau_2024_pr_v1",
-          "profile_status": "PR_INPUT_READY",
+          "profile_status": "PRODUCTION",
           "view_ids": ["1090541706000906451"]
         }
       ]
@@ -104,7 +104,7 @@
       "profiles": [
         {
           "profile_id": "celcomdigi_usp_pr_v1",
-          "profile_status": "PR_INPUT_READY",
+          "profile_status": "PRODUCTION",
           "view_ids": ["703232142435130905"]
         }
       ]
@@ -120,7 +120,7 @@
       "profiles": [
         {
           "profile_id": "jendela_tx_migration_pr_v1",
-          "profile_status": "PR_INPUT_READY",
+          "profile_status": "PRODUCTION",
           "view_ids": ["4026888666764910245"]
         }
       ]
@@ -136,7 +136,7 @@
       "profiles": [
         {
           "profile_id": "zte_tx_mini_pr_v1",
-          "profile_status": "PR_INPUT_READY",
+          "profile_status": "PRODUCTION",
           "view_ids": ["2279585426760368522"]
         }
       ]
