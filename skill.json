@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "1.0",
+  "skillId": "tx-pr-auditor",
+  "displayName": "TX PR Auditor",
+  "version": "1.0.0",
+  "runtime": {
+    "type": "python",
+    "entrypoint": "src/main.py",
+    "minimumPython": "3.11"
+  },
+  "inputs": {
+    "files": [
+      {
+        "name": "final_po",
+        "required": true,
+        "multiple": false,
+        "acceptedExtensions": [".xlsx"],
+        "maximumBytes": 209715200
+      },
+      {
+        "name": "expected_ecc",
+        "required": true,
+        "multiple": true,
+        "acceptedExtensions": [".xlsx"],
+        "maximumBytes": 104857600,
+        "maximumCount": 100
+      }
+    ],
+    "parametersSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "filterYear": { "type": "integer", "minimum": 2000, "maximum": 2200 },
+        "filterMonth": { "type": "integer", "minimum": 1, "maximum": 12 },
+        "annotateEcc": { "type": "boolean", "default": true }
+      }
+    }
+  },
+  "execution": {
+    "timeoutSeconds": 3600,
+    "supportsCancellation": true,
+    "cancellation": { "type": "sentinelFile", "path": "control/cancel.requested" },
+    "limits": {
+      "maximumFinalPoRows": 10000,
+      "progressHeartbeatSeconds": 30
+    }
+  },
+  "resultContractVersion": "1.0",
+  "compatibility": {
+    "duRegistryVersion": "2026.08.10",
+    "sourceRegistrySha256": "5f68c53b8772a5f3b6c9fd0696bc60a3f17169c77fb1a36f8ed310f2b5a4e577",
+    "duRegistryIdentity": "project-plus-du-model",
+    "supportedIdentityCount": 9,
+    "promotionPolicy": "Auditor release tests must prove parity with an explicitly pinned create-pr-cd registry snapshot."
+  }
+}

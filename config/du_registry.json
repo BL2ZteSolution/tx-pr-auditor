@@ -1,7 +1,10 @@
 {
   "schema_version": "1.0",
+  "registry_version": "2026.08.10",
   "identity_rule": "iEPMS Project + DU Model",
   "source_contract": "create-pr-cd/config/registries/mw_du_profile_identity_registry.yaml",
+  "source_contract_sha256": "5f68c53b8772a5f3b6c9fd0696bc60a3f17169c77fb1a36f8ed310f2b5a4e577",
+  "promotion_policy": "Release only after parity tests pass against the declared source contract SHA-256.",
   "project_aliases": {
     "Malaysia_CelcomDigi_Project": [
       "Malaysia_CelcomDigi_Project",
@@ -40,7 +43,7 @@
       "profiles": [
         {
           "profile_id": "tx_rollout_2023_pr_v1",
-          "profile_status": "PR_INPUT_READY",
+          "profile_status": "PRODUCTION",
           "view_ids": ["8530399820526021092"]
         }
       ]
@@ -56,7 +59,7 @@
       "profiles": [
         {
           "profile_id": "mw_eos_swap_pr_v1",
-          "profile_status": "PR_INPUT_READY",
+          "profile_status": "PRODUCTION",
           "view_ids": ["7476572371505372260"]
         }
       ]
@@ -72,7 +75,7 @@
       "profiles": [
         {
           "profile_id": "celcomdigi_bau_2023_pr_v1",
-          "profile_status": "PR_INPUT_READY",
+          "profile_status": "PRODUCTION",
           "view_ids": ["3882899459299681347"]
         }
       ]
@@ -88,7 +91,7 @@
       "profiles": [
         {
           "profile_id": "celcomdigi_bau_2024_pr_v1",
-          "profile_status": "PR_INPUT_READY",
+          "profile_status": "PRODUCTION",
           "view_ids": ["1090541706000906451"]
         }
       ]
@@ -104,7 +107,7 @@
       "profiles": [
         {
           "profile_id": "celcomdigi_usp_pr_v1",
-          "profile_status": "PR_INPUT_READY",
+          "profile_status": "PRODUCTION",
           "view_ids": ["703232142435130905"]
         }
       ]
@@ -120,7 +123,7 @@
       "profiles": [
         {
           "profile_id": "jendela_tx_migration_pr_v1",
-          "profile_status": "PR_INPUT_READY",
+          "profile_status": "PRODUCTION",
           "view_ids": ["4026888666764910245"]
         }
       ]
@@ -136,7 +139,7 @@
       "profiles": [
         {
           "profile_id": "zte_tx_mini_pr_v1",
-          "profile_status": "PR_INPUT_READY",
+          "profile_status": "PRODUCTION",
           "view_ids": ["2279585426760368522"]
         }
       ]

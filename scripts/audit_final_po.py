@@ -10,6 +10,7 @@ generation logic.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -22,6 +23,17 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DU_REGISTRY = SKILL_ROOT / "config" / "du_registry.json"
+_CANCELLATION_PROBE = None
+
+
+def set_cancellation_probe(probe) -> None:
+    global _CANCELLATION_PROBE
+    _CANCELLATION_PROBE = probe
+
+
+def check_cancellation() -> None:
+    if _CANCELLATION_PROBE is not None:
+        _CANCELLATION_PROBE()
 
 
 FINAL_PO_SHEET_NAME = "条目明细"
@@ -352,6 +364,12 @@ def load_du_registry(path: Path = DEFAULT_DU_REGISTRY) -> Dict[str, Any]:
     )
     source_contract_status = "NOT_AVAILABLE"
     if source_contract and source_contract_path.is_file():
+        expected_source_sha256 = text(registry.get("source_contract_sha256")).lower()
+        actual_source_sha256 = hashlib.sha256(source_contract_path.read_bytes()).hexdigest()
+        if not expected_source_sha256 or actual_source_sha256 != expected_source_sha256:
+            raise ValueError(
+                f"Upstream DU identity registry SHA-256 differs from the auditor release declaration: {source_contract_path}"
+            )
         upstream = json.loads(source_contract_path.read_text(encoding="utf-8"))
         validate_du_registry_parity(identities, upstream, source_contract_path)
         source_contract_status = "MATCHED"
@@ -692,6 +710,8 @@ def read_table(
     consecutive_blank_rows = 0
     max_blank_tail_rows = 1000
     for row_idx, row in enumerate(ws.iter_rows(min_row=header_row + 1, values_only=True), header_row + 1):
+        if row_idx % 250 == 0:
+            check_cancellation()
         if max_data_rows is not None and len(rows) >= max_data_rows:
             break
         values = list(row[: len(headers)])
@@ -770,6 +790,7 @@ def workbook_reader(
     ecc_rows: List[Dict[str, Any]] = []
     ecc_meta = []
     for ecc_file in expected_ecc_files:
+        check_cancellation()
         rows, meta = read_table(ecc_file, ecc_sheet, 1)
         ecc_rows.extend(rows)
         ecc_meta.append(meta)
@@ -820,7 +841,9 @@ def canonical_builder(
 ) -> CanonicalDataset:
     du_registry = du_registry or load_du_registry()
     final_records: List[FinalPORecord] = []
-    for record in dataset.final_po_records:
+    for record_index, record in enumerate(dataset.final_po_records):
+        if record_index % 250 == 0:
+            check_cancellation()
         data = dict(record.canonical)
         data["site_code"] = normalize_code(data.get("site_code"))
         data["du"] = normalize_code(data.get("du"))
@@ -848,7 +871,9 @@ def canonical_builder(
         final_records.append(replace(record, canonical=data))
 
     expected_records: List[ExpectedECCRecord] = []
-    for record in dataset.expected_records:
+    for record_index, record in enumerate(dataset.expected_records):
+        if record_index % 250 == 0:
+            check_cancellation()
         data = dict(record.canonical)
         data["site_code"] = normalize_code(data.get("site_code"))
         data["du"] = normalize_code(data.get("du"))
@@ -950,7 +975,9 @@ def expected_matcher(dataset: CanonicalDataset) -> List[ExpectedMatch]:
             expected_by_site[key].append(expected)
 
     matches: List[ExpectedMatch] = []
-    for final_po in dataset.final_po_records:
+    for record_index, final_po in enumerate(dataset.final_po_records):
+        if record_index % 250 == 0:
+            check_cancellation()
         f = final_po.canonical
         candidate_keys = [key for key in [f.get("site_code"), f.get("du")] if key]
         expected_items = []
@@ -1047,7 +1074,9 @@ def expected_matcher(dataset: CanonicalDataset) -> List[ExpectedMatch]:
 
 def audit_engine(matches: Sequence[ExpectedMatch], metadata: Dict[str, Any]) -> AuditDataset:
     results: List[AuditResult] = []
-    for match in matches:
+    for match_index, match in enumerate(matches):
+        if match_index % 250 == 0:
+            check_cancellation()
         final_po = match.final_po
         f = final_po.canonical
         submitted_subcon = f.get("submitted_subcontractor_norm")
@@ -1208,6 +1237,8 @@ def duplicate_resolver(dataset: AuditDataset) -> AuditDataset:
 
     consumed: Dict[Tuple[str, str, str, str, str], float] = defaultdict(float)
     for idx in pending:
+        if idx % 250 == 0:
+            check_cancellation()
         result = results[idx]
         f = result.final_po.canonical
         key = consumption_key(result)
@@ -1265,6 +1296,8 @@ def report_writer(dataset: AuditDataset, output: Path, summary_json: Optional[Pa
             cell.fill = PatternFill(start_color="D9EAF7", end_color="D9EAF7", fill_type="solid")
 
     for row_idx, result in enumerate(dataset.results, 2):
+        if row_idx % 250 == 0:
+            check_cancellation()
         for col_idx, header in enumerate(raw_headers, 1):
             ws.cell(row_idx, col_idx, result.final_po.raw.get(header))
         audit_values = [
@@ -1328,6 +1361,7 @@ def annotated_ecc_writer(
     reason_counts: Counter[str] = Counter()
 
     for source_file in expected_ecc_files:
+        check_cancellation()
         output_name = source_file.name
         if output_name in seen_output_names:
             raise ValueError(f"Duplicate annotated ECC output filename would overwrite another file: {output_name}")
@@ -1352,6 +1386,8 @@ def annotated_ecc_writer(
         file_status_counts: Counter[str] = Counter()
         annotated_rows = 0
         for row_idx in range(2, ws.max_row + 1):
+            if row_idx % 250 == 0:
+                check_cancellation()
             key = ecc_annotation_key(source_file.name, ws.title, row_idx)
             values = annotation_values(annotation_index.get(key, []))
             for offset, value in enumerate(values):

@@ -5,6 +5,10 @@ description: Validate Final PO.xlsx against create-pr-cd generated ECC output fi
 
 # TX PR Auditor
 
+## Platform Contract
+
+For contract execution, use `python src/main.py --input-manifest <workspace>/input.json`. The public interface and limits are declared in `skill.json`; all audit rules below remain skill-owned.
+
 Use this skill after `create-pr-cd` has generated PR/ECC output. The auditor validates `Final PO.xlsx` against those generated ECC workbooks.
 
 ## Contract
