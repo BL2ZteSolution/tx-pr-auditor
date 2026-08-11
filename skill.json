@@ -36,6 +36,75 @@
       }
     }
   },
+  "ui": {
+    "schemaVersion": "1.0",
+    "workerLabel": "PR Auditor",
+    "hero": {
+      "title": "Review PO submissions with the dedicated PR Auditor worker.",
+      "subtitle": "Upload Final PO and expected ECC evidence once. The worker audits PO claims and preserves evidence in one controlled run.",
+      "chips": ["PR Auditor", "Validate", "Audit Run"]
+    },
+    "workbench": { "title": "PR Auditor" },
+    "actions": {
+      "primaryLabel": "Run Audit",
+      "readyLabel": "Ready to run audit",
+      "missingFilesMessage": "Upload Final PO and expected ECC workbooks to start.",
+      "validationMessage": "Validate Final PO and expected ECC workbooks before running the audit."
+    },
+    "uploads": {
+      "final_po": {
+        "title": "Final PO Upload",
+        "label": "Final PO workbook",
+        "hint": "Upload the current Final PO workbook to be audited.",
+        "actionLabel": "Validate Final PO",
+        "validationRequired": true
+      },
+      "expected_ecc": {
+        "title": "Expected ECC Upload",
+        "label": "Expected ECC workbooks",
+        "hint": "Upload one or more approved ECC entitlement workbooks.",
+        "actionLabel": "Validate Expected ECC",
+        "validationRequired": true
+      }
+    },
+    "uploadGroups": [
+      {
+        "id": "audit-period",
+        "after": "final_po",
+        "title": "Final PO Period",
+        "subtitle": "Dispatch Date filter",
+        "hint": "Only Final PO rows with a Dispatch Date in this period will be audited.",
+        "fields": ["filterYear", "filterMonth"]
+      }
+    ],
+    "configuration": {
+      "modeLabel": "Audit Run",
+      "stageHeading": "Controlled audit run",
+      "stages": [
+        { "title": "Load entitlement", "description": "Use the approved expected ECC workbooks as the audit baseline." },
+        { "title": "Audit Final PO", "description": "Compare Final PO claims with the supplied ECC entitlement." },
+        { "title": "Deliver evidence", "description": "Download the audit workbook and summary. Uploaded source files remain unchanged." }
+      ],
+      "notice": "One job runs the standalone auditor. Audit findings require business review."
+    },
+    "parameters": {
+      "filterYear": {
+        "label": "Year",
+        "control": "select",
+        "optionSource": "years",
+        "startOffset": -5,
+        "endOffset": 1,
+        "defaultFrom": "currentYear"
+      },
+      "filterMonth": {
+        "label": "Month",
+        "control": "select",
+        "optionSource": "months",
+        "defaultFrom": "currentMonth"
+      },
+      "annotateEcc": { "hidden": true, "default": true }
+    }
+  },
   "execution": {
     "timeoutSeconds": 3600,
     "supportsCancellation": true,
