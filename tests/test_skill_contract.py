@@ -61,7 +61,11 @@ class SkillContractTests(unittest.TestCase):
             result = json.loads((root / "result.json").read_text(encoding="utf-8"))
             self.assertEqual(result["status"], "succeeded")
             self.assertEqual(result["summary"]["metrics"]["totalRows"], 2)
-            self.assertEqual(len(result["outputs"]), 2)
+            self.assertEqual(len(result["outputs"]), 3)
+            archive = root / next(item["path"] for item in result["outputs"] if item["path"].endswith(".zip"))
+            self.assertTrue(archive.is_file())
+            with contract.zipfile.ZipFile(archive) as bundle:
+                self.assertEqual(set(bundle.namelist()), {"PR_Audit_Result.xlsx", "PR_Audit_Summary.json"})
 
     def test_findings_produce_warning_status(self):
         with tempfile.TemporaryDirectory() as temp:

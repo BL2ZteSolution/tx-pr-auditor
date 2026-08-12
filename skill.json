@@ -82,7 +82,7 @@
       "stages": [
         { "title": "Create entitlement", "description": "create-pr-cd reads EPMS and generates mandatory TSS and TI ECC lines." },
         { "title": "Audit Final PO", "description": "tx-pr-auditor compares Final PO only with the generated ECC entitlement." },
-        { "title": "Deliver evidence", "description": "Download the audit workbook and summary. Uploaded source files remain unchanged." }
+        { "title": "Deliver evidence", "description": "Download the audit workbook or complete delivery archive. Uploaded source files remain unchanged." }
       ],
       "notice": "One job runs both engines in order. EPMS is never passed into the focused tx-pr-auditor audit engine. Audit findings require business review."
     },

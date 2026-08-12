@@ -21,7 +21,7 @@ The public job accepts `Final PO.xlsx` and `EPMS.xlsx`. One Python entrypoint ru
 2. Run pinned `create-pr-cd` for mandatory TI entitlement.
 3. Read submitted Final PO and generated ECC rows.
 4. Compare, classify, and resolve duplicate quantity consumption.
-5. Write `PR_Audit_Result.xlsx`, summary JSON, and optional annotated ECC evidence.
+5. Write `PR_Audit_Result.xlsx`, summary JSON, optional annotated ECC evidence, and `TX_PR_Audit_Delivery.zip` containing the complete delivery.
 
 Only the dependency receives EPMS. The focused audit engine never reads EPMS or the PR model and must not reconstruct entitlement.
 
