@@ -1,0 +1,4 @@
+[submodule "create-pr-cd"]
+	path = dependencies/create-pr-cd
+	url = https://github.com/Gumb-D/create-pr-cd.git
+	branch = main

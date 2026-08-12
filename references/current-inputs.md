@@ -1,6 +1,6 @@
 # Current TX PR Auditor Inputs
 
-Use this reference for the current local workbook contract. The auditor validates `Final PO.xlsx` after `create-pr-cd` has generated ECC output.
+Use this reference for the current workbook contract. The public composite entrypoint accepts `Final PO.xlsx` plus EPMS. It generates TSS and TI ECC through pinned `create-pr-cd`, then passes only those ECC workbooks into the focused audit pipeline.
 
 ## Paths
 
@@ -10,7 +10,7 @@ Typical local paths:
 
 ```text
 skills/tx-pr-auditor/input/Final PO.xlsx
-skills/create-pr-cd/output/
+skills/tx-pr-auditor/input/EPMS.xlsx
 skills/tx-pr-auditor/output/PR_Audit_Result.xlsx
 ```
 
@@ -106,6 +106,6 @@ project. If the same submitted site and item match multiple identified DU
 models without a Final PO DU model, the row fails closed with
 `INVALID_AMBIGUOUS_DU_MODEL`.
 
-## Post-create-pr-cd Validation Role
+## Composite and Focused Boundaries
 
-The auditor validates submitted PO rows in `Final PO.xlsx` against generated ECC rows. It does not generate ECC files, does not call `create-pr-cd`, and does not read EPMS or PR Model workbooks.
+`src/main.py` owns the explicit `create-pr-cd TSS -> create-pr-cd TI -> audit` sequence and accepts EPMS. `scripts/audit_final_po.py` remains a focused Final PO-versus-ECC engine: it never receives EPMS or the PR model and does not reproduce entitlement rules.

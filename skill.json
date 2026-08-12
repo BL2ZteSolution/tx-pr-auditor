@@ -2,7 +2,7 @@
   "schemaVersion": "1.0",
   "skillId": "tx-pr-auditor",
   "displayName": "TX PR Auditor",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "runtime": {
     "type": "python",
     "entrypoint": "src/main.py",
@@ -18,12 +18,11 @@
         "maximumBytes": 209715200
       },
       {
-        "name": "expected_ecc",
+        "name": "epms",
         "required": true,
-        "multiple": true,
-        "acceptedExtensions": [".xlsx"],
-        "maximumBytes": 104857600,
-        "maximumCount": 100
+        "multiple": false,
+        "acceptedExtensions": [".xlsx", ".xlsm"],
+        "maximumBytes": 209715200
       }
     ],
     "parametersSchema": {
@@ -41,15 +40,15 @@
     "workerLabel": "PR Auditor",
     "hero": {
       "title": "Review PO submissions with the dedicated PR Auditor worker.",
-      "subtitle": "Upload Final PO and expected ECC evidence once. The worker audits PO claims and preserves evidence in one controlled run.",
+      "subtitle": "Upload Final PO and EPMS once. The worker creates ECC entitlement, audits PO claims, and preserves evidence in one controlled run.",
       "chips": ["PR Auditor", "Validate", "Audit Run"]
     },
     "workbench": { "title": "PR Auditor" },
     "actions": {
       "primaryLabel": "Run Audit",
       "readyLabel": "Ready to run audit",
-      "missingFilesMessage": "Upload Final PO and expected ECC workbooks to start.",
-      "validationMessage": "Validate Final PO and expected ECC workbooks before running the audit."
+      "missingFilesMessage": "Upload Final PO and EPMS workbooks to start.",
+      "validationMessage": "Validate Final PO and EPMS workbooks before running the audit."
     },
     "uploads": {
       "final_po": {
@@ -59,11 +58,11 @@
         "actionLabel": "Validate Final PO",
         "validationRequired": true
       },
-      "expected_ecc": {
-        "title": "Expected ECC Upload",
-        "label": "Expected ECC workbooks",
-        "hint": "Upload one or more approved ECC entitlement workbooks.",
-        "actionLabel": "Validate Expected ECC",
+      "epms": {
+        "title": "EPMS Upload",
+        "label": "EPMS workbook",
+        "hint": "Upload EPMS site data. create-pr-cd will generate the TSS and TI entitlement used by the audit.",
+        "actionLabel": "Validate EPMS",
         "validationRequired": true
       }
     },
@@ -79,13 +78,13 @@
     ],
     "configuration": {
       "modeLabel": "Audit Run",
-      "stageHeading": "Controlled audit run",
+      "stageHeading": "Controlled two-stage run",
       "stages": [
-        { "title": "Load entitlement", "description": "Use the approved expected ECC workbooks as the audit baseline." },
-        { "title": "Audit Final PO", "description": "Compare Final PO claims with the supplied ECC entitlement." },
+        { "title": "Create entitlement", "description": "create-pr-cd reads EPMS and generates mandatory TSS and TI ECC lines." },
+        { "title": "Audit Final PO", "description": "tx-pr-auditor compares Final PO only with the generated ECC entitlement." },
         { "title": "Deliver evidence", "description": "Download the audit workbook and summary. Uploaded source files remain unchanged." }
       ],
-      "notice": "One job runs the standalone auditor. Audit findings require business review."
+      "notice": "One job runs both engines in order. EPMS is never passed into the focused tx-pr-auditor audit engine. Audit findings require business review."
     },
     "parameters": {
       "filterYear": {
@@ -115,6 +114,14 @@
     }
   },
   "resultContractVersion": "1.0",
+  "dependencies": [
+    {
+      "skillId": "create-pr-cd",
+      "version": "4.0.0",
+      "path": "dependencies/create-pr-cd",
+      "scopes": ["TSS", "TI"]
+    }
+  ],
   "compatibility": {
     "duRegistryVersion": "2026.08.10",
     "sourceRegistrySha256": "5f68c53b8772a5f3b6c9fd0696bc60a3f17169c77fb1a36f8ed310f2b5a4e577",
