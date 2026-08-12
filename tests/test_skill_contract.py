@@ -19,7 +19,7 @@ class SkillContractTests(unittest.TestCase):
         input_dir = root / "input"
         input_dir.mkdir()
         files = []
-        for name, role in (("final.xlsx", "final_po"), ("ecc.xlsx", "expected_ecc")):
+        for name, role in (("final.xlsx", "final_po"), ("epms.xlsx", "epms")):
             path = input_dir / name
             path.write_bytes(name.encode())
             files.append({
@@ -34,7 +34,7 @@ class SkillContractTests(unittest.TestCase):
         envelope = {
             "schemaVersion": "1.0",
             "jobId": "JOB-AUDIT-001",
-            "skill": {"skillId": "tx-pr-auditor", "version": "1.0.0"},
+            "skill": {"skillId": "tx-pr-auditor", "version": "1.1.0"},
             "parameters": {"annotateEcc": False},
             "files": files,
             "paths": {"workspace": ".", "output": "output", "result": "result.json", "cancellation": "control/cancel.requested"},
@@ -53,7 +53,10 @@ class SkillContractTests(unittest.TestCase):
                 Path(parsed.summary_json).write_text("{}", encoding="utf-8")
                 return {"total_rows": 2, "classifications": {"Normal": 2}, "reason_codes": {}, "du_models": {"DU": 2}}
 
-            with patch.object(contract.audit_final_po, "run_pipeline", side_effect=fake_run):
+            generated_ecc = root / "generated.xlsx"
+            generated_ecc.write_bytes(b"ecc")
+            entitlement = [{"scope": "TSS", "status": "succeeded", "workbooks": [generated_ecc], "warnings": [], "metrics": {}}]
+            with patch.object(contract, "run_entitlement_generation", return_value=entitlement), patch.object(contract.audit_final_po, "run_pipeline", side_effect=fake_run):
                 self.assertEqual(contract.run(manifest), 0)
             result = json.loads((root / "result.json").read_text(encoding="utf-8"))
             self.assertEqual(result["status"], "succeeded")
@@ -70,7 +73,10 @@ class SkillContractTests(unittest.TestCase):
                 Path(parsed.summary_json).write_text("{}", encoding="utf-8")
                 return {"total_rows": 1, "classifications": {"Abnormal - Wrong": 1}}
 
-            with patch.object(contract.audit_final_po, "run_pipeline", side_effect=fake_run):
+            generated_ecc = root / "generated.xlsx"
+            generated_ecc.write_bytes(b"ecc")
+            entitlement = [{"scope": "TSS", "status": "succeeded", "workbooks": [generated_ecc], "warnings": [], "metrics": {}}]
+            with patch.object(contract, "run_entitlement_generation", return_value=entitlement), patch.object(contract.audit_final_po, "run_pipeline", side_effect=fake_run):
                 self.assertEqual(contract.run(manifest), 0)
             result = json.loads((root / "result.json").read_text(encoding="utf-8"))
             self.assertEqual(result["status"], "succeeded_with_warning")

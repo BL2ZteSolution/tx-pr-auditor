@@ -1,12 +1,10 @@
 import hashlib
 import json
-import os
-import subprocess
-import sys
 import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 from openpyxl import Workbook
 
@@ -14,6 +12,10 @@ from tests.test_audit_final_po import audit
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SPEC = __import__("importlib.util").util.spec_from_file_location("tx_auditor_integration_contract", ROOT / "src" / "main.py")
+contract = __import__("importlib.util").util.module_from_spec(SPEC)
+assert SPEC.loader
+SPEC.loader.exec_module(contract)
 
 
 def first_headers(field_map):
@@ -79,8 +81,10 @@ class SkillContractIntegrationTests(unittest.TestCase):
             sheet.append([ecc_values.get(field, "") for field in ecc_headers])
             workbook.save(ecc)
 
+            epms = input_dir / "EPMS.xlsx"
+            epms.write_bytes(b"synthetic epms input")
             files = []
-            for role, file_path in (("final_po", final_po), ("expected_ecc", ecc)):
+            for role, file_path in (("final_po", final_po), ("epms", epms)):
                 files.append({
                     "name": role,
                     "path": file_path.relative_to(workspace).as_posix(),
@@ -91,23 +95,19 @@ class SkillContractIntegrationTests(unittest.TestCase):
             envelope = {
                 "schemaVersion": "1.0",
                 "jobId": "TX-CONTRACT-INTEGRATION",
-                "skill": {"skillId": "tx-pr-auditor", "version": "1.0.0"},
+                "skill": {"skillId": "tx-pr-auditor", "version": "1.1.0"},
                 "parameters": {"annotateEcc": True},
                 "files": files,
                 "paths": {"workspace": ".", "output": "output", "result": "result.json", "cancellation": "control/cancel.requested"},
             }
             input_manifest = workspace / "input.json"
             input_manifest.write_text(json.dumps(envelope), encoding="utf-8")
-            result = subprocess.run(
-                [sys.executable, str(ROOT / "src" / "main.py"), "--input-manifest", str(input_manifest)],
-                cwd=workspace,
-                env={**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"},
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                timeout=60,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
+            entitlement = [
+                {"scope": "TSS", "status": "succeeded", "workbooks": [ecc], "warnings": [], "metrics": {}},
+                {"scope": "TI", "status": "succeeded", "workbooks": [], "warnings": [], "metrics": {}},
+            ]
+            with patch.object(contract, "run_entitlement_generation", return_value=entitlement):
+                self.assertEqual(contract.run(input_manifest), 0)
             payload = json.loads((workspace / "result.json").read_text(encoding="utf-8"))
             self.assertEqual(payload["status"], "succeeded")
             self.assertEqual(payload["summary"]["metrics"]["classifications"], {"Normal": 1})
