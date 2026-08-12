@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -176,6 +177,14 @@ def safe_metrics(summary: dict[str, Any]) -> dict[str, Any]:
         "duModels": dict(summary.get("du_models") or {}),
         "annotatedFileCount": int((summary.get("annotated_ecc") or {}).get("file_count", 0) or 0),
     }
+
+
+def create_delivery_archive(output: Path, candidates: list[Path]) -> Path:
+    archive = output / "TX_PR_Audit_Delivery.zip"
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        for path in candidates:
+            bundle.write(path, path.relative_to(output).as_posix())
+    return archive
 
 
 def load_create_pr_cd_dependency() -> tuple[Path, str]:
@@ -499,6 +508,7 @@ def run(input_manifest: Path) -> int:
         candidates = list(dict.fromkeys(path.resolve() for path in candidates if path.is_file()))
         for path in candidates:
             path.relative_to(output.resolve())
+        candidates.append(create_delivery_archive(output.resolve(), candidates).resolve())
         metrics = safe_metrics(summary)
         metrics["entitlement"] = {
             "dependencySkillId": CREATE_PR_CD_SKILL_ID,
