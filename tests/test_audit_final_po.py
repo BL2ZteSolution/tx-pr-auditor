@@ -85,6 +85,81 @@ class TxPrAuditorTests(unittest.TestCase):
     def tearDown(self):
         audit.set_cancellation_probe(None)
 
+    def test_pr_model_column_b_defines_scope(self):
+        catalog = audit.load_pr_model_scope_catalog()
+
+        self.assertEqual(catalog["scopesByCode"]["350000589343"], "TSS")
+        self.assertEqual(catalog["scopesByCode"]["350001095406"], "TI")
+        self.assertEqual(catalog["scopesByCode"]["350001000403"], "PLANNING")
+        self.assertEqual(catalog["scopesByCode"]["350000592793"], "OPERATION_BACKOFFICE")
+
+    def test_pr_model_scope_overrides_description_heuristic(self):
+        catalog = audit.load_pr_model_scope_catalog()
+        final = final_record(
+            source_row=16,
+            request_number="PSQ202606080675",
+            business_domain="",
+            submitted_item_code="350000589344",
+            submitted_item_description="Microwave only site telecom equipment installation design(Hop)",
+            submitted_quantity=1,
+        )
+        expected = expected_record(
+            source_file="Central-GCI TX Mini Project TSS PR 20260813.xlsx",
+            expected_item_code="350000589344",
+            expected_item_description="Microwave only site telecom equipment installation design(Hop)",
+            scope="TSS",
+        )
+        dataset = audit.CanonicalDataset([final], [expected], {})
+        dataset = audit.canonical_builder(dataset)
+        dataset = audit.augment_pr_model_entitlement(
+            dataset,
+            catalog,
+            {
+                "sites": {
+                    "SITE-SYN-001": {
+                        "requestScopes": {"PSQ202606080675": "TSS"},
+                        "subcontractors": {"TSS": "GCI"},
+                        "operationEligible": False,
+                    }
+                }
+            },
+        )
+
+        result = audit.duplicate_resolver(
+            audit.audit_engine(audit.expected_matcher(dataset), dataset.metadata)
+        ).results[0]
+
+        self.assertEqual(result.scope, "TSS")
+        self.assertEqual(result.classification, "Normal")
+
+    def test_missing_generated_ti_is_reconstructed_from_model_and_epms_reference(self):
+        catalog = audit.load_pr_model_scope_catalog()
+        final = final_record(
+            source_row=17,
+            request_number="PSQ202606040512",
+            submitted_item_code="350001095406",
+            submitted_item_description="Swap - MW Link (0.9/1.2m, 2 antenna) for C&D Project",
+            submitted_quantity=1,
+        )
+        dataset = audit.augment_pr_model_entitlement(
+            audit.canonical_builder(audit.CanonicalDataset([final], [], {})),
+            catalog,
+            {
+                "sites": {
+                    "SITE-SYN-001": {
+                        "requestScopes": {"PSQ202606040512": "TI"},
+                        "subcontractors": {"TI": "GCI"},
+                        "operationEligible": False,
+                    }
+                }
+            },
+        )
+
+        reconstructed = dataset.expected_records[0]
+        self.assertEqual(reconstructed.canonical["scope"], "TI")
+        self.assertEqual(reconstructed.canonical["expected_item_code"], "350001095406")
+        self.assertEqual(reconstructed.canonical["audit_entitlement_source"], "PR_MODEL_COLUMN_B_AND_EPMS_SCOPE_EVIDENCE")
+
     def test_large_pipeline_checks_cooperative_cancellation(self):
         audit.set_cancellation_probe(lambda: (_ for _ in ()).throw(RuntimeError("cancelled-by-test")))
         records = [final_record(source_row=index + 2, site_code=f"SITE-{index:04d}") for index in range(1000)]

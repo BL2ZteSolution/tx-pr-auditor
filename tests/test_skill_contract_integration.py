@@ -82,7 +82,15 @@ class SkillContractIntegrationTests(unittest.TestCase):
             workbook.save(ecc)
 
             epms = input_dir / "EPMS.xlsx"
-            epms.write_bytes(b"synthetic epms input")
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "data"
+            sheet.append(["site|synthetic"])
+            sheet.append(["Site Basic Info"])
+            sheet.append(["Site Basic Info"])
+            sheet.append(["customer site code"])
+            sheet.append(["SITE-001"])
+            workbook.save(epms)
             files = []
             for role, file_path in (("final_po", final_po), ("epms", epms)):
                 files.append({
