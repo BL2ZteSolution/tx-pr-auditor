@@ -23,7 +23,13 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DU_REGISTRY = SKILL_ROOT / "config" / "du_registry.json"
+DEFAULT_PR_MODEL = SKILL_ROOT / "dependencies" / "create-pr-cd" / "Info" / "input" / "pr_model.xlsx"
 _CANCELLATION_PROBE = None
+
+PR_MODEL_SCOPE_TSS = "TSS"
+PR_MODEL_SCOPE_TI = "TI"
+PR_MODEL_SCOPE_PLANNING = "PLANNING"
+PR_MODEL_SCOPE_OPERATION_BACKOFFICE = "OPERATION_BACKOFFICE"
 
 
 def set_cancellation_probe(probe) -> None:
@@ -235,6 +241,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--final-po", default="input/Final PO.xlsx", help="Path to Final PO.xlsx")
     parser.add_argument(
+        "--epms",
+        help="Optional EPMS workbook used only to derive request-to-scope and Back Office trigger evidence.",
+    )
+    parser.add_argument(
         "--final-po-sheet",
         help="Final PO worksheet name. By default, auto-detect 条目明细 or Sheet1.",
     )
@@ -256,6 +266,15 @@ def parse_args() -> argparse.Namespace:
         "--du-registry",
         default=str(DEFAULT_DU_REGISTRY),
         help="Nine-DU identity registry used to classify and isolate ECC entitlement.",
+    )
+    parser.add_argument(
+        "--pr-model",
+        default=str(DEFAULT_PR_MODEL),
+        help="Pinned create-pr-cd PR Model whose column B PBOM codes define audit scope.",
+    )
+    parser.add_argument(
+        "--scope-evidence-json",
+        help="Optional derived EPMS scope-evidence JSON produced by the composite wrapper.",
     )
     parser.add_argument("--ecc-sheet", default=ECC_SHEET_NAME, help="ECC worksheet name")
     parser.add_argument("--output", default="output/PR_Audit_Result.xlsx", help="Audit workbook path")
@@ -292,6 +311,160 @@ def require_file(path: Path, label: str) -> Path:
     if not path.is_file():
         raise FileNotFoundError(f"{label} is not a file: {path}")
     return path
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _model_scope(sow: Any, active_section: str) -> str:
+    normalized = " ".join(text(sow).upper().split())
+    if normalized == "PLANNING":
+        return PR_MODEL_SCOPE_PLANNING
+    if normalized in {"OPERATION BACK OFFICE", "OPERATION BACKOFFICE"}:
+        return PR_MODEL_SCOPE_OPERATION_BACKOFFICE
+    return active_section
+
+
+def load_pr_model_scope_catalog(path: Path = DEFAULT_PR_MODEL) -> Dict[str, Any]:
+    """Load the approved PBOM-to-scope contract from PR Model column B."""
+    model_path = require_file(Path(path), "PR Model")
+    _, load_workbook, _, _ = require_openpyxl()
+    workbook = load_workbook(model_path, read_only=True, data_only=True)
+    try:
+        worksheet = workbook["TX Line Item (After 21-Apr 26)"]
+        active_section = ""
+        entries: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for row_number, row in enumerate(
+            worksheet.iter_rows(min_col=1, max_col=8, values_only=True),
+            1,
+        ):
+            sow = text(row[0])
+            if sow.upper() == "TSS MODEL":
+                active_section = PR_MODEL_SCOPE_TSS
+                continue
+            if sow.upper() == "TI MODEL":
+                active_section = PR_MODEL_SCOPE_TI
+                continue
+            code = normalize_code(row[1])
+            description = text(row[2])
+            if not active_section or not code.isdigit() or not description:
+                continue
+            scope = _model_scope(sow, active_section)
+            entries[code].append(
+                {
+                    "scope": scope,
+                    "sow": sow,
+                    "description": description,
+                    "unit": text(row[3]) or "Hop",
+                    "quantity": to_float(row[4], default=1.0),
+                    "rules": text(row[5]),
+                    "remarks": text(row[6]),
+                    "sourceRow": row_number,
+                }
+            )
+    finally:
+        workbook.close()
+
+    scopes_by_code = {
+        code: sorted({entry["scope"] for entry in code_entries})
+        for code, code_entries in entries.items()
+    }
+    ambiguous = {code: scopes for code, scopes in scopes_by_code.items() if len(scopes) != 1}
+    if ambiguous:
+        raise ValueError(f"PR Model column B maps PBOM codes to multiple scopes: {ambiguous}")
+    return {
+        "path": str(model_path.resolve()),
+        "sha256": file_sha256(model_path),
+        "worksheet": worksheet.title,
+        "entries": dict(entries),
+        "scopesByCode": {code: scopes[0] for code, scopes in scopes_by_code.items()},
+    }
+
+
+def _header_key(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", text(value).lower()).strip()
+
+
+def _request_references(value: Any) -> List[str]:
+    return sorted(set(re.findall(r"\b[A-Z]*SQ\d+\b", text(value).upper())))
+
+
+def build_epms_scope_evidence(path: Path) -> Dict[str, Any]:
+    """Derive scope-only evidence from EPMS without passing raw EPMS to the audit engine."""
+    epms_path = require_file(Path(path), "EPMS")
+    _, load_workbook, _, _ = require_openpyxl()
+    workbook = load_workbook(epms_path, read_only=True, data_only=True)
+    try:
+        worksheet = workbook["data"] if "data" in workbook.sheetnames else workbook.active
+        headers = [
+            tuple(worksheet.cell(row, column).value for row in range(1, 5))
+            for column in range(1, worksheet.max_column + 1)
+        ]
+
+        def find_column(*display_names: str) -> Optional[int]:
+            accepted = {_header_key(name) for name in display_names}
+            for index, levels in enumerate(headers):
+                if _header_key(levels[3]) in accepted:
+                    return index
+            return None
+
+        site_column = find_column("customer site code")
+        if site_column is None:
+            raise ValueError("EPMS scope evidence cannot resolve the customer site code column.")
+        reference_columns = {
+            PR_MODEL_SCOPE_TSS: find_column("Subcon PR - TSS"),
+            PR_MODEL_SCOPE_TI: find_column("Subcon PR - TI"),
+            PR_MODEL_SCOPE_PLANNING: find_column("Subcon PR - Planning", "Subcon - PR Planning"),
+        }
+        subcontractor_columns = {
+            PR_MODEL_SCOPE_TSS: find_column("SubCon - TSS Team"),
+            PR_MODEL_SCOPE_TI: find_column("SubCon - TI Team"),
+            PR_MODEL_SCOPE_PLANNING: find_column("Subcon - Planning", "Subcon Planning"),
+        }
+        operation_trigger_column = None
+        for index, levels in enumerate(headers):
+            stage_task = " ".join(_header_key(value) for value in levels[1:3])
+            if "tx integrated" in stage_task and _header_key(levels[3]) == "actual end time":
+                operation_trigger_column = index
+                break
+
+        sites: Dict[str, Any] = {}
+        for source_row, row in enumerate(worksheet.iter_rows(min_row=5, values_only=True), 5):
+            site_code = normalize_code(row[site_column])
+            if not site_code:
+                continue
+            request_scopes: Dict[str, str] = {}
+            for scope, column in reference_columns.items():
+                if column is None:
+                    continue
+                for request in _request_references(row[column]):
+                    prior = request_scopes.get(request)
+                    request_scopes[request] = scope if prior in {None, scope} else "MULTI"
+            subcontractors = {
+                scope: text(row[column])
+                for scope, column in subcontractor_columns.items()
+                if column is not None and text(row[column])
+            }
+            sites[site_code] = {
+                "sourceRow": source_row,
+                "requestScopes": request_scopes,
+                "subcontractors": subcontractors,
+                "operationEligible": bool(
+                    operation_trigger_column is not None
+                    and text(row[operation_trigger_column])
+                ),
+            }
+    finally:
+        workbook.close()
+    return {
+        "sourceSha256": file_sha256(epms_path),
+        "sites": sites,
+    }
 
 
 def load_du_registry(path: Path = DEFAULT_DU_REGISTRY) -> Dict[str, Any]:
@@ -946,6 +1119,140 @@ def canonical_builder(
     return CanonicalDataset(final_records, expected_records, metadata)
 
 
+def _catalog_entry_for_final_po(
+    final_po: FinalPORecord,
+    catalog: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    data = final_po.canonical
+    code = normalize_code(data.get("submitted_item_code"))
+    entries = list((catalog.get("entries") or {}).get(code) or [])
+    if not entries:
+        return None
+    description_key = _header_key(data.get("submitted_item_description"))
+    description_matches = [
+        entry for entry in entries
+        if _header_key(entry.get("description")) == description_key
+    ]
+    candidates = description_matches or entries
+    scopes = {text(entry.get("scope")) for entry in candidates if text(entry.get("scope"))}
+    if len(scopes) != 1:
+        return None
+    quantities = {to_float(entry.get("quantity"), default=1.0) for entry in candidates}
+    submitted = to_float(data.get("submitted_quantity"), default=-1.0)
+    if len(quantities) > 1:
+        quantity_matches = [
+            entry for entry in candidates
+            if abs(to_float(entry.get("quantity"), default=1.0) - submitted) < 1e-9
+        ]
+        if not quantity_matches:
+            return None
+        candidates = quantity_matches
+    return dict(candidates[0])
+
+
+def _scope_evidence_allows(
+    final_po: FinalPORecord,
+    scope: str,
+    scope_evidence: Dict[str, Any],
+) -> tuple[bool, str]:
+    data = final_po.canonical
+    site_code = normalize_code(data.get("site_code"))
+    site = (scope_evidence.get("sites") or {}).get(site_code) or {}
+    if not site:
+        return False, ""
+    if scope == PR_MODEL_SCOPE_OPERATION_BACKOFFICE:
+        return bool(site.get("operationEligible")), "Allstar"
+    request = normalize_code(data.get("request_number"))
+    request_scope = (site.get("requestScopes") or {}).get(request)
+    if request_scope != scope:
+        return False, ""
+    expected_subcontractor = text((site.get("subcontractors") or {}).get(scope))
+    return bool(expected_subcontractor), expected_subcontractor
+
+
+def augment_pr_model_entitlement(
+    dataset: CanonicalDataset,
+    catalog: Dict[str, Any],
+    scope_evidence: Dict[str, Any],
+) -> CanonicalDataset:
+    """Add audit-only entitlement proven by PR Model column B and EPMS references."""
+    expected_records = list(dataset.expected_records)
+    existing = {
+        (
+            normalize_code(record.canonical.get("site_code")),
+            normalize_code(record.canonical.get("expected_item_code")),
+            text(record.canonical.get("scope")),
+        )
+        for record in expected_records
+    }
+    synthetic_count = 0
+    synthetic_by_scope: Counter[str] = Counter()
+    for final_po in dataset.final_po_records:
+        entry = _catalog_entry_for_final_po(final_po, catalog)
+        if not entry:
+            continue
+        scope = text(entry.get("scope"))
+        allowed, expected_subcontractor = _scope_evidence_allows(
+            final_po,
+            scope,
+            scope_evidence,
+        )
+        if not allowed:
+            continue
+        final_data = final_po.canonical
+        site_code = normalize_code(final_data.get("site_code"))
+        item_code = normalize_code(final_data.get("submitted_item_code"))
+        key = (site_code, item_code, scope)
+        if key in existing:
+            continue
+        canonical = {
+            "site_code": site_code,
+            "du": normalize_code(final_data.get("du")),
+            "region": text(final_data.get("region")),
+            "expected_subcontractor": expected_subcontractor or text(final_data.get("submitted_subcontractor")),
+            "expected_subcontractor_norm": normalize_subcontractor(
+                expected_subcontractor or final_data.get("submitted_subcontractor")
+            ),
+            "expected_item_code": item_code,
+            "expected_item_description": text(entry.get("description")),
+            "expected_quantity": to_float(entry.get("quantity"), default=1.0),
+            "scope": scope,
+            "du_resolution_status": text(final_data.get("du_resolution_status")) or "UNKNOWN",
+            "du_identity_key": text(final_data.get("du_identity_key")),
+            "du_model_name": text(final_data.get("du_model_name")),
+            "du_model_id": text(final_data.get("du_model_id")),
+            "du_profile_ids": text(final_data.get("du_profile_ids")),
+            "du_profile_statuses": text(final_data.get("du_profile_statuses")),
+            "du_view_ids": text(final_data.get("du_view_ids")),
+            "du_project_key": text(final_data.get("du_project_key")),
+            "audit_entitlement_source": "PR_MODEL_COLUMN_B_AND_EPMS_SCOPE_EVIDENCE",
+        }
+        canonical["entitlement_key"] = entitlement_key(canonical)
+        expected_records.append(
+            ExpectedECCRecord(
+                source_file=str(catalog["path"]),
+                source_sheet=text(catalog.get("worksheet")),
+                source_row=int(entry.get("sourceRow") or 0),
+                raw=dict(canonical),
+                canonical=canonical,
+            )
+        )
+        existing.add(key)
+        synthetic_count += 1
+        synthetic_by_scope[scope] += 1
+
+    metadata = dict(dataset.metadata)
+    metadata["pr_model_scope_contract"] = {
+        "path": catalog.get("path"),
+        "sha256": catalog.get("sha256"),
+        "column": "B",
+        "scopeByPbom": dict(catalog.get("scopesByCode") or {}),
+        "syntheticEntitlementCount": synthetic_count,
+        "syntheticEntitlementByScope": dict(synthetic_by_scope),
+    }
+    return CanonicalDataset(dataset.final_po_records, expected_records, metadata)
+
+
 def filter_final_po_period(dataset: CanonicalDataset, year: Optional[int], month: Optional[int]) -> CanonicalDataset:
     if year is None and month is None:
         return dataset
@@ -983,7 +1290,11 @@ def expected_matcher(dataset: CanonicalDataset) -> List[ExpectedMatch]:
         expected_items = []
         site_key = ""
         final_du_identity = text(f.get("du_identity_key"))
-        final_scope = infer_scope_from_final_po(final_po)
+        model_scopes = (
+            dataset.metadata.get("pr_model_scope_contract", {})
+            .get("scopeByPbom", {})
+        )
+        final_scope = text(model_scopes.get(f.get("submitted_item_code"))) or infer_scope_from_final_po(final_po)
         for key in candidate_keys:
             candidates = expected_by_site.get(key, [])
             if final_du_identity:
@@ -1524,6 +1835,17 @@ def run_pipeline(args: argparse.Namespace) -> Dict[str, Any]:
     final_po = require_file(Path(args.final_po), "Final PO")
     ecc_files = expand_ecc_paths(args.expected_ecc)
     du_registry = load_du_registry(Path(args.du_registry))
+    pr_model = Path(getattr(args, "pr_model", DEFAULT_PR_MODEL))
+    catalog = load_pr_model_scope_catalog(pr_model)
+    scope_evidence = getattr(args, "scope_evidence", None)
+    scope_evidence_json = getattr(args, "scope_evidence_json", None)
+    if scope_evidence is None and scope_evidence_json:
+        scope_evidence = json.loads(
+            require_file(Path(scope_evidence_json), "Scope evidence").read_text(encoding="utf-8")
+        )
+    if scope_evidence is None and getattr(args, "epms", None):
+        scope_evidence = build_epms_scope_evidence(Path(args.epms))
+    scope_evidence = scope_evidence or {"sites": {}}
     raw = workbook_reader(
         final_po=final_po,
         expected_ecc_files=ecc_files,
@@ -1534,7 +1856,11 @@ def run_pipeline(args: argparse.Namespace) -> Dict[str, Any]:
     )
     mapped = field_mapper(raw)
     canonical = filter_final_po_period(
-        canonical_builder(mapped, du_registry),
+        augment_pr_model_entitlement(
+            canonical_builder(mapped, du_registry),
+            catalog,
+            scope_evidence,
+        ),
         args.filter_year,
         args.filter_month,
     )
@@ -1672,7 +1998,7 @@ def infer_scope_from_ecc(source_file: str) -> str:
     if " PLANNING PR " in name:
         return "PLANNING"
     if " OPERATION PR " in name or " OPERATION BACKOFFICE PR " in name:
-        return "OPERATION"
+        return PR_MODEL_SCOPE_OPERATION_BACKOFFICE
     return "UNKNOWN"
 
 
@@ -1683,8 +2009,8 @@ def infer_scope_from_final_po(record: FinalPORecord) -> str:
     combined = f"{domain} {description}"
     if "planning" in combined:
         return "PLANNING"
-    if "operation" in combined or "backoffice" in combined:
-        return "OPERATION"
+    if "operation" in combined or "backoffice" in combined or "back office" in combined:
+        return PR_MODEL_SCOPE_OPERATION_BACKOFFICE
     if "survey" in combined or "tss" in combined:
         return "TSS"
     if "installation" in combined or "antenna" in combined or "microwave" in combined:

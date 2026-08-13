@@ -13,17 +13,20 @@ The public job accepts `Final PO.xlsx` and `EPMS.xlsx`. One Python entrypoint ru
 
 ## Contract
 
-`create-pr-cd` owns EPMS/site-data interpretation, PR Model matching, contract lookup, and ECC generation.
+`create-pr-cd` owns ECC generation. Its pinned approved PR Model remains the authority for PBOM scope: column B supplies the PBOM code, while the model section/SOW identifies TSS, TI, Planning, or Operation Back Office.
 
 `tx-pr-auditor` owns the composite sequence and downstream validation:
 
 1. Run pinned `create-pr-cd` for mandatory TSS entitlement.
 2. Run pinned `create-pr-cd` for mandatory TI entitlement.
-3. Read submitted Final PO and generated ECC rows.
-4. Compare, classify, and resolve duplicate quantity consumption.
-5. Write `PR_Audit_Result.xlsx`, summary JSON, optional annotated ECC evidence, and `TX_PR_Audit_Delivery.zip` containing the complete delivery.
+3. Derive request-to-scope and Back Office trigger evidence from EPMS.
+4. Read submitted Final PO and generated ECC rows.
+5. Resolve Final PO scope from the pinned PR Model column-B PBOM contract before description heuristics.
+6. Reconstruct audit-only entitlement when the PBOM scope agrees with the exact EPMS request reference, or when the governed Back Office trigger is present.
+7. Compare, classify, and resolve duplicate quantity consumption.
+8. Write `PR_Audit_Result.xlsx`, summary JSON, optional annotated ECC evidence, and `TX_PR_Audit_Delivery.zip` containing the complete delivery.
 
-Only the dependency receives EPMS. The focused audit engine never reads EPMS or the PR model and must not reconstruct entitlement.
+Audit-only reconstruction does not create a production PR or weaken `create-pr-cd` duplicate prevention. It is limited to the pinned PR Model SHA-256 and derived EPMS scope evidence; ambiguous PBOM-to-scope mappings remain fail-closed.
 
 ## Inputs
 
@@ -101,7 +104,7 @@ python -m pip install -r requirements.txt
 
 ## Audit Rules
 
-Use generated ECC rows as expected entitlement. Compare Final PO rows by:
+Use generated ECC rows plus governed audit-only PR Model entitlement as expected entitlement. Compare Final PO rows by:
 
 - Site ID / physical site code
 - DU / logical site code when available
@@ -109,6 +112,15 @@ Use generated ECC rows as expected entitlement. Compare Final PO rows by:
 - PBOM/item code
 - Subcontractor
 - Quantity
+
+Scope resolution priority:
+
+1. Pinned PR Model column-B PBOM mapping.
+2. Exact EPMS request reference for TSS, TI, or Planning.
+3. Governed TX Integrated trigger for Operation Back Office.
+4. Description inference only when the PBOM is absent from the approved model.
+
+The approved mappings include `350001000403` as Planning and `350000592793` as Operation Back Office.
 
 Decision priority:
 
