@@ -84,7 +84,7 @@
         { "title": "Audit Final PO", "description": "tx-pr-auditor compares Final PO only with the generated ECC entitlement." },
         { "title": "Deliver evidence", "description": "Download the audit workbook or complete delivery archive. Uploaded source files remain unchanged." }
       ],
-      "notice": "One job runs both engines in order. EPMS is never passed into the focused tx-pr-auditor audit engine. Audit findings require business review."
+      "notice": "One job runs both engines in order. EPMS supplies governed scope evidence to the audit engine. Audit findings require business review."
     },
     "parameters": {
       "filterYear": {
@@ -93,13 +93,13 @@
         "optionSource": "years",
         "startOffset": -5,
         "endOffset": 1,
-        "defaultFrom": "currentYear"
+        "placeholder": "All years"
       },
       "filterMonth": {
         "label": "Month",
         "control": "select",
         "optionSource": "months",
-        "defaultFrom": "currentMonth"
+        "placeholder": "All months"
       },
       "annotateEcc": { "hidden": true, "default": true }
     }
