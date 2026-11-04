@@ -1,4 +1,6 @@
 import hashlib
+import os
+from tests.shared_fixture import approval_context
 import json
 import tempfile
 import unittest
@@ -26,6 +28,11 @@ def first_headers(field_map):
 
 
 class SkillContractIntegrationTests(unittest.TestCase):
+    def setUp(self):
+        context = patch.dict(os.environ, {"TX_PR_AUDITOR_MW_DEPENDENCY": json.dumps(approval_context())})
+        context.start()
+        self.addCleanup(context.stop)
+
     def test_real_workbooks_run_through_standalone_contract(self):
         with tempfile.TemporaryDirectory() as temp:
             workspace = Path(temp)
@@ -103,7 +110,7 @@ class SkillContractIntegrationTests(unittest.TestCase):
             envelope = {
                 "schemaVersion": "1.0",
                 "jobId": "TX-CONTRACT-INTEGRATION",
-                "skill": {"skillId": "tx-pr-auditor", "version": "1.1.0"},
+                "skill": {"skillId": "tx-pr-auditor", "version": "1.2.0"},
                 "parameters": {"annotateEcc": True},
                 "files": files,
                 "paths": {"workspace": ".", "output": "output", "result": "result.json", "cancellation": "control/cancel.requested"},

@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
 from collections import Counter, defaultdict
@@ -19,11 +20,12 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from shared_mw import resolve_mw_root
 
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DU_REGISTRY = SKILL_ROOT / "config" / "du_registry.json"
-DEFAULT_PR_MODEL = SKILL_ROOT / "dependencies" / "create-pr-cd" / "Info" / "input" / "pr_model.xlsx"
+DEFAULT_PR_MODEL = resolve_mw_root() / "Info" / "input" / "pr_model.xlsx"
 _CANCELLATION_PROBE = None
 
 PR_MODEL_SCOPE_TSS = "TSS"
@@ -530,6 +532,9 @@ def load_du_registry(path: Path = DEFAULT_DU_REGISTRY) -> Dict[str, Any]:
             raise ValueError(f"DU view ID traceability mismatch: {identity_key}")
 
     source_contract = text(registry.get("source_contract"))
+    shared_context = os.environ.get("TX_PR_AUDITOR_MW_DEPENDENCY")
+    if shared_context and source_contract.startswith("create-pr-cd/"):
+        source_contract = str(Path(json.loads(shared_context)["root"]) / source_contract.split("/", 1)[1])
     source_contract_path = (
         Path(source_contract)
         if Path(source_contract).is_absolute()

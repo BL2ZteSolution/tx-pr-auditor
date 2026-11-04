@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "audit_final_po.py"
+sys.path.insert(0, str(SCRIPT_PATH.parent))
 SPEC = importlib.util.spec_from_file_location("audit_final_po", SCRIPT_PATH)
 audit = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None

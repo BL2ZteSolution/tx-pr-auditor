@@ -21,19 +21,19 @@ from typing import Any
 
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
-CREATE_PR_CD_ROOT = SKILL_ROOT / "dependencies" / "create-pr-cd"
 SCRIPTS = SKILL_ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import audit_final_po  # noqa: E402
+from shared_mw import verify_shared_mw, SharedDependencyError  # noqa: E402
 
 
 CONTRACT_VERSION = "1.0"
 SKILL_ID = "tx-pr-auditor"
-SKILL_VERSION = "1.1.0"
+SKILL_VERSION = "1.2.0"
 CREATE_PR_CD_SKILL_ID = "create-pr-cd"
-CREATE_PR_CD_VERSION = "4.0.0"
+CREATE_PR_CD_VERSION = "4.1.0"
 ENTITLEMENT_SCOPES = ("TSS", "TI")
 
 
@@ -188,49 +188,11 @@ def create_delivery_archive(output: Path, candidates: list[Path]) -> Path:
 
 
 def load_create_pr_cd_dependency() -> tuple[Path, str]:
-    manifest_path = CREATE_PR_CD_ROOT / "skill.json"
-    if not manifest_path.is_file():
-        raise ContractError(
-            "CREATE_PR_CD_DEPENDENCY_MISSING",
-            "The pinned create-pr-cd dependency is unavailable. Initialize Git submodules recursively.",
-            "dependency",
-        )
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ContractError(
-            "CREATE_PR_CD_DEPENDENCY_INVALID",
-            "The pinned create-pr-cd dependency manifest is invalid.",
-            "dependency",
-        ) from exc
-    if manifest.get("skillId") != CREATE_PR_CD_SKILL_ID or manifest.get("version") != CREATE_PR_CD_VERSION:
-        raise ContractError(
-            "CREATE_PR_CD_DEPENDENCY_IDENTITY_MISMATCH",
-            "The pinned create-pr-cd dependency identity does not match the auditor release.",
-            "dependency",
-            {
-                "expectedSkillId": CREATE_PR_CD_SKILL_ID,
-                "expectedVersion": CREATE_PR_CD_VERSION,
-                "actualSkillId": manifest.get("skillId"),
-                "actualVersion": manifest.get("version"),
-            },
-        )
-    entrypoint = (CREATE_PR_CD_ROOT / str((manifest.get("runtime") or {}).get("entrypoint") or "")).resolve()
-    try:
-        entrypoint.relative_to(CREATE_PR_CD_ROOT.resolve())
-    except ValueError as exc:
-        raise ContractError(
-            "CREATE_PR_CD_DEPENDENCY_INVALID",
-            "The pinned create-pr-cd entrypoint escapes its package.",
-            "dependency",
-        ) from exc
-    if not entrypoint.is_file():
-        raise ContractError(
-            "CREATE_PR_CD_DEPENDENCY_INVALID",
-            "The pinned create-pr-cd entrypoint is unavailable.",
-            "dependency",
-        )
-    return entrypoint, str(manifest["version"])
+        dependency = verify_shared_mw()
+    except SharedDependencyError as exc:
+        raise ContractError(exc.code, str(exc), "dependency") from exc
+    return dependency["entrypoint"], dependency["version"]
 
 
 def _forward_dependency_event(scope: str, line: str, percent_start: int, percent_end: int) -> None:
@@ -275,9 +237,12 @@ def run_entitlement_scope(
     percent_start: int,
     percent_end: int,
 ) -> dict[str, Any]:
+    check_cancel(cancellation)
+    if scope not in ENTITLEMENT_SCOPES:
+        raise ContractError("CREATE_PR_CD_SCOPE_INVALID", "Auditor entitlement generation supports TSS/TI only.", "dependency")
     entrypoint, dependency_version = load_create_pr_cd_dependency()
     dependency_workspace = workspace / "temp" / "create-pr-cd" / scope.lower()
-    dependency_input = dependency_workspace / "input" / f"epms{epms.suffix.lower()}"
+    dependency_input = dependency_workspace / "input" / "epms.xlsx"
     dependency_output = dependency_workspace / "output"
     dependency_result = dependency_workspace / "result.json"
     child_cancellation = dependency_workspace / "temp" / "cancel.requested"
@@ -291,7 +256,17 @@ def run_entitlement_scope(
     dependency_input.parent.mkdir(parents=True, exist_ok=True)
     dependency_output.mkdir(parents=True, exist_ok=True)
     child_cancellation.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(epms, dependency_input)
+    if epms.suffix.lower() == ".xlsm":
+        # MW's public input is XLSX only. Preserve the original upload and
+        # materialize a job-local, macro-free OOXML copy for entitlement.
+        from openpyxl import load_workbook
+        book = load_workbook(epms, keep_vba=False, keep_links=False)
+        try:
+            book.save(dependency_input)
+        finally:
+            book.close()
+    else:
+        shutil.copy2(epms, dependency_input)
     child_envelope = {
         "schemaVersion": CONTRACT_VERSION,
         "jobId": f"{envelope['jobId']}-entitlement-{scope.lower()}",
@@ -384,6 +359,8 @@ def run_entitlement_scope(
             "dependency",
             {"scope": scope, "exitCode": return_code},
         ) from exc
+    if result.get("jobId") != child_envelope["jobId"] or result.get("skillId") != CREATE_PR_CD_SKILL_ID or result.get("skillVersion") != dependency_version:
+        raise ContractError("CREATE_PR_CD_RESULT_INVALID", "Entitlement result identity differs from the invoked dependency.", "dependency")
     if return_code != 0 or result.get("status") not in {"succeeded", "succeeded_with_warning"}:
         child_error = result.get("error") or {}
         raise ContractError(
@@ -400,7 +377,9 @@ def run_entitlement_scope(
     workbooks = []
     for index, item in enumerate(result.get("outputs") or []):
         path = resolve_inside(dependency_workspace, item.get("path"), f"create-pr-cd.{scope}.outputs[{index}].path")
-        if path.is_file() and path.suffix.lower() in {".xlsx", ".xlsm"}:
+        if not path.is_file() or not item.get("sha256") or sha256(path) != item["sha256"]:
+            raise ContractError("CREATE_PR_CD_RESULT_INVALID", "Entitlement output checksum is missing or invalid.", "dependency")
+        if path.suffix.lower() in {".xlsx", ".xlsm"}:
             workbooks.append(path)
     if not workbooks:
         raise ContractError(
@@ -465,6 +444,11 @@ def run(input_manifest: Path) -> int:
             raise ContractError("PARAMETERS_INVALID", "filterMonth must be an integer from 1 to 12.")
         if year is not None and (not isinstance(year, int) or not 2000 <= year <= 2200):
             raise ContractError("PARAMETERS_INVALID", "filterYear must be an integer from 2000 to 2200.")
+        load_create_pr_cd_dependency()
+        dependency_identity = verify_shared_mw()
+        expected_identity = {key: dependency_identity[key] for key in ("skillId", "version", "packageSha256")}
+        if "dependencies" in envelope and envelope["dependencies"] != [expected_identity]:
+            raise ContractError("CREATE_PR_CD_DEPENDENCY_CHANGED", "Frozen dependency identity differs from the approved runtime.", "dependency")
         entitlement_results = run_entitlement_generation(envelope, workspace, epms, cancellation)
         expected_ecc = [
             workbook
@@ -483,7 +467,7 @@ def run(input_manifest: Path) -> int:
             filter_month=month,
             expected_ecc=[str(path) for path in expected_ecc],
             du_registry=str(SKILL_ROOT / "config" / "du_registry.json"),
-            pr_model=str(CREATE_PR_CD_ROOT / "Info" / "input" / "pr_model.xlsx"),
+            pr_model=str(dependency_identity["root"] / "Info" / "input" / "pr_model.xlsx"),
             epms=str(epms),
             scope_evidence=None,
             scope_evidence_json=None,
@@ -516,7 +500,9 @@ def run(input_manifest: Path) -> int:
         metrics = safe_metrics(summary)
         metrics["entitlement"] = {
             "dependencySkillId": CREATE_PR_CD_SKILL_ID,
-            "dependencyVersion": CREATE_PR_CD_VERSION,
+            "dependencyVersion": dependency_identity["version"],
+            "dependencyPackageSha256": dependency_identity["packageSha256"],
+            "dependencyCommit": dependency_identity.get("commit"),
             "scopes": [
                 {
                     "scope": item["scope"],

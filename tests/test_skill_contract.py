@@ -1,4 +1,6 @@
 import hashlib
+import os
+from tests.shared_fixture import approval_context
 import importlib.util
 import json
 import tempfile
@@ -15,6 +17,11 @@ SPEC.loader.exec_module(contract)
 
 
 class SkillContractTests(unittest.TestCase):
+    def setUp(self):
+        context = patch.dict(os.environ, {"TX_PR_AUDITOR_MW_DEPENDENCY": json.dumps(approval_context())})
+        context.start()
+        self.addCleanup(context.stop)
+
     def make_request(self, root: Path, *, cancelled: bool = False) -> Path:
         input_dir = root / "input"
         input_dir.mkdir()
@@ -34,7 +41,7 @@ class SkillContractTests(unittest.TestCase):
         envelope = {
             "schemaVersion": "1.0",
             "jobId": "JOB-AUDIT-001",
-            "skill": {"skillId": "tx-pr-auditor", "version": "1.1.0"},
+            "skill": {"skillId": "tx-pr-auditor", "version": "1.2.0"},
             "parameters": {"annotateEcc": False},
             "files": files,
             "paths": {"workspace": ".", "output": "output", "result": "result.json", "cancellation": "control/cancel.requested"},
