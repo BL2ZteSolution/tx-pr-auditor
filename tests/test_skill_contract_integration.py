@@ -110,7 +110,7 @@ class SkillContractIntegrationTests(unittest.TestCase):
             envelope = {
                 "schemaVersion": "1.0",
                 "jobId": "TX-CONTRACT-INTEGRATION",
-                "skill": {"skillId": "tx-pr-auditor", "version": "1.2.0"},
+                "skill": {"skillId": "tx-pr-auditor", "version": "1.2.1"},
                 "parameters": {"annotateEcc": True},
                 "files": files,
                 "paths": {"workspace": ".", "output": "output", "result": "result.json", "cancellation": "control/cancel.requested"},

@@ -1,4 +1,4 @@
-﻿import hashlib
+import hashlib
 import json
 import os
 import tempfile
@@ -14,7 +14,7 @@ class SharedMWTests(unittest.TestCase):
         context = approval_context()
         with patch.dict(os.environ, {"TX_PR_AUDITOR_MW_DEPENDENCY": json.dumps(context)}):
             result = verify_shared_mw()
-            self.assertEqual(result["version"], "4.1.0")
+            self.assertEqual(result["version"], context["version"])
             self.assertEqual(result["packageSha256"], context["packageSha256"])
             self.assertEqual(result["root"], Path(context["root"]))
         self.assertFalse((Path(__file__).parents[1] / "dependencies/create-pr-cd").exists())
@@ -41,7 +41,7 @@ class SharedMWTests(unittest.TestCase):
             self.assertEqual(error.exception.code, "CREATE_PR_CD_DEPENDENCY_COMMIT_MISMATCH")
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp); (root/'src').mkdir(); (root/'Info/input').mkdir(parents=True)
-            (root/'skill.json').write_text(json.dumps({'skillId':'create-pr-cd','version':'4.1.0','runtime':{'entrypoint':'src/main.py'}}))
+            (root/'skill.json').write_text(json.dumps({'skillId':'create-pr-cd','version':context['version'],'runtime':{'entrypoint':'src/main.py'}}))
             (root/'src/main.py').write_text('print(1)\n'); (root/'Info/input/pr_model.xlsx').write_bytes(b'model')
             files=['skill.json','src/main.py','Info/input/pr_model.xlsx']; digest=hashlib.sha256()
             for name in sorted(files): digest.update((name+'\0'+hashlib.sha256((root/name).read_bytes().replace(b'\r\n',b'\n')).hexdigest()+'\n').encode())

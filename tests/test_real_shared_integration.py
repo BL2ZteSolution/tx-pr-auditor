@@ -1,4 +1,4 @@
-﻿"""Real shared MW subprocesses plus the Auditor pipeline, using synthetic workbooks."""
+"""Real shared MW subprocesses plus the Auditor pipeline, using synthetic workbooks."""
 import hashlib
 import json
 import os
@@ -40,13 +40,13 @@ class RealSharedIntegrationTests(unittest.TestCase):
             with self.subTest(extension=extension), tempfile.TemporaryDirectory() as tmp:
                 root=Path(tmp); epms=root/('epms'+extension);final=root/'final.xlsx';write_epms(epms);write_final(final)
                 before=hashlib.sha256(epms.read_bytes()).hexdigest();context=approval_context()
-                envelope={'schemaVersion':'1.0','jobId':'REAL-SHARED-AUDIT','skill':{'skillId':'tx-pr-auditor','version':'1.2.0'},'dependencies':[{k:context[k] for k in ['skillId','version','packageSha256']}], 'parameters':{'annotateEcc':True},'files':[{'name':name,'path':path.name,'sha256':hashlib.sha256(path.read_bytes()).hexdigest()} for name,path in [('final_po',final),('epms',epms)]]}
+                envelope={'schemaVersion':'1.0','jobId':'REAL-SHARED-AUDIT','skill':{'skillId':'tx-pr-auditor','version':'1.2.1'},'dependencies':[{k:context[k] for k in ['skillId','version','packageSha256']}], 'parameters':{'annotateEcc':True},'files':[{'name':name,'path':path.name,'sha256':hashlib.sha256(path.read_bytes()).hexdigest()} for name,path in [('final_po',final),('epms',epms)]]}
                 manifest=root/'input.json';manifest.write_text(json.dumps(envelope),encoding='utf-8')
                 with patch.dict(os.environ,{'TX_PR_AUDITOR_MW_DEPENDENCY':json.dumps(context)}):
                     self.assertEqual(contract.run(manifest),0,(root/'result.json').read_text(encoding='utf-8'))
                 result=json.loads((root/'result.json').read_text(encoding='utf-8'))
                 self.assertEqual(result['summary']['metrics']['classifications'],{'Normal':1})
-                dep=result['summary']['metrics']['entitlement'];self.assertEqual(dep['dependencyVersion'],'4.1.0');self.assertEqual(dep['dependencyPackageSha256'],context['packageSha256'])
+                dep=result['summary']['metrics']['entitlement'];self.assertEqual(dep['dependencyVersion'],context['version']);self.assertEqual(dep['dependencyPackageSha256'],context['packageSha256'])
                 self.assertEqual([r['scope'] for r in dep['scopes']],['TSS','TI'])
                 self.assertTrue(all(r['workbookCount']>0 for r in dep['scopes']))
                 self.assertEqual(hashlib.sha256(epms.read_bytes()).hexdigest(),before)
@@ -54,7 +54,7 @@ class RealSharedIntegrationTests(unittest.TestCase):
                     self.assertEqual(hashlib.sha256((root/item['path']).read_bytes()).hexdigest(),item['sha256'])
                 for scope in ['tss','ti']:
                     child=json.loads((root/f'temp/create-pr-cd/{scope}/skill-input.json').read_text(encoding='utf-8'))
-                    self.assertEqual(child['skill']['version'],'4.1.0');self.assertTrue(child['files'][0]['path'].endswith('.xlsx'))
+                    self.assertEqual(child['skill']['version'],context['version']);self.assertTrue(child['files'][0]['path'].endswith('.xlsx'))
 
     def test_child_failure_and_existing_cancellation_are_safe(self):
         with tempfile.TemporaryDirectory() as tmp:

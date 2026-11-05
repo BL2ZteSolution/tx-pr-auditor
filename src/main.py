@@ -31,9 +31,8 @@ from shared_mw import verify_shared_mw, SharedDependencyError  # noqa: E402
 
 CONTRACT_VERSION = "1.0"
 SKILL_ID = "tx-pr-auditor"
-SKILL_VERSION = "1.2.0"
+SKILL_VERSION = "1.2.1"
 CREATE_PR_CD_SKILL_ID = "create-pr-cd"
-CREATE_PR_CD_VERSION = "4.1.0"
 ENTITLEMENT_SCOPES = ("TSS", "TI")
 
 
