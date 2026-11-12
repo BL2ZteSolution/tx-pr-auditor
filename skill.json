@@ -2,7 +2,7 @@
   "schemaVersion": "1.0",
   "skillId": "tx-pr-auditor",
   "displayName": "TX PR Auditor",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "runtime": {
     "type": "python",
     "entrypoint": "src/main.py",
@@ -159,7 +159,8 @@
       "skillId": "create-pr-cd",
       "supportedVersions": [
         "4.1.0",
-        "4.1.1"
+        "4.1.1",
+        "4.1.2"
       ]
     }
   ],

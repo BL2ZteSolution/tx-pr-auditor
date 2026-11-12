@@ -40,7 +40,7 @@ class RealSharedIntegrationTests(unittest.TestCase):
             with self.subTest(extension=extension), tempfile.TemporaryDirectory() as tmp:
                 root=Path(tmp); epms=root/('epms'+extension);final=root/'final.xlsx';write_epms(epms);write_final(final)
                 before=hashlib.sha256(epms.read_bytes()).hexdigest();context=approval_context()
-                envelope={'schemaVersion':'1.0','jobId':'REAL-SHARED-AUDIT','skill':{'skillId':'tx-pr-auditor','version':'1.2.1'},'dependencies':[{k:context[k] for k in ['skillId','version','packageSha256']}], 'parameters':{'annotateEcc':True},'files':[{'name':name,'path':path.name,'sha256':hashlib.sha256(path.read_bytes()).hexdigest()} for name,path in [('final_po',final),('epms',epms)]]}
+                envelope={'schemaVersion':'1.0','jobId':'REAL-SHARED-AUDIT','skill':{'skillId':'tx-pr-auditor','version':'1.2.2'},'dependencies':[{k:context[k] for k in ['skillId','version','packageSha256']}], 'parameters':{'annotateEcc':True},'files':[{'name':name,'path':path.name,'sha256':hashlib.sha256(path.read_bytes()).hexdigest()} for name,path in [('final_po',final),('epms',epms)]]}
                 manifest=root/'input.json';manifest.write_text(json.dumps(envelope),encoding='utf-8')
                 with patch.dict(os.environ,{'TX_PR_AUDITOR_MW_DEPENDENCY':json.dumps(context)}):
                     self.assertEqual(contract.run(manifest),0,(root/'result.json').read_text(encoding='utf-8'))

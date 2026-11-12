@@ -41,7 +41,7 @@ class SkillContractTests(unittest.TestCase):
         envelope = {
             "schemaVersion": "1.0",
             "jobId": "JOB-AUDIT-001",
-            "skill": {"skillId": "tx-pr-auditor", "version": "1.2.1"},
+            "skill": {"skillId": "tx-pr-auditor", "version": "1.2.2"},
             "parameters": {"annotateEcc": False},
             "files": files,
             "paths": {"workspace": ".", "output": "output", "result": "result.json", "cancellation": "control/cancel.requested"},
